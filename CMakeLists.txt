@@ -949,6 +949,8 @@ if(APPLE)
 endif()
 
 install(TARGETS kyty_emulator DESTINATION .)
+# GPLv2 requires the license text to accompany binary distributions.
+install(FILES "${CMAKE_SOURCE_DIR}/LICENSE" DESTINATION .)
 if(KYTY_BUILD_LAUNCHER)
 	add_subdirectory("${KYTY_SOURCE_DIR}/launcher" "${CMAKE_CURRENT_BINARY_DIR}/launcher")
 
