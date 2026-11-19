@@ -15,6 +15,7 @@
 #include <QApplication>
 #include <QByteArray>
 #include <QCheckBox>
+#include <QColor>
 #include <QComboBox>
 #include <QAbstractButton>
 #include <QDesktopServices>
@@ -35,6 +36,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QObject>
+#include <QPainter>
 #include <QPointer>
 #include <QProcess>
 #include <QPushButton>
@@ -45,6 +47,7 @@
 #include <QScreen>
 #include <QSlider>
 #include <QSettings>
+#include <QShortcut>
 #include <QShowEvent>
 #include <QStatusBar>
 #include <QStringList>
@@ -238,7 +241,7 @@ static bool ClampWindowToVisibleScreens(QWidget* window) {
 void MainDialogPrivate::Setup(MainDialog* main_dialog) {
 	m_ui = new Ui::MainDialog;
 	m_ui->setupUi(main_dialog);
-	m_ui->brand_mark->setPixmap(QIcon(QStringLiteral(":/icons/emustation5.png")).pixmap(QSize(38, 38)));
+	m_ui->brand_mark->setPixmap(QIcon(QStringLiteral(":/icons/emustation5.png")).pixmap(QSize(44, 44)));
 	m_ui->widget->SetControllerPreview(&m_controller_preview);
 
 	m_main_dialog    = main_dialog;
@@ -305,6 +308,10 @@ void MainDialogPrivate::Setup(MainDialog* main_dialog) {
 void MainDialogPrivate::SetupMenus() {
 	auto* menubar = m_main_dialog->menuBar();
 	menubar->setNativeMenuBar(false);
+	// The classic menu bar is replaced by the navigation rail and its More menu.
+	// Its actions are kept alive (the More menu reuses them); shortcuts are rebound
+	// below because hidden menu actions do not receive key presses.
+	menubar->hide();
 
 	const auto invoke = [this](const char* slot) {
 		QMetaObject::invokeMethod(m_ui->widget, slot, Qt::DirectConnection);
@@ -415,6 +422,60 @@ void MainDialogPrivate::SetupMenus() {
 	});
 	auto* about_qt = help->addAction(tr("About Qt"));
 	connect(about_qt, &QAction::triggered, qApp, &QApplication::aboutQt);
+
+	// PS5-style navigation rail. The existing monochrome glyphs are tinted to a
+	// soft white so they read against the dark rail.
+	const auto tinted_icon = [](const QString& resource) {
+		auto pixmap = QIcon(resource).pixmap(QSize(28, 28));
+		QPainter painter(&pixmap);
+		painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+		painter.fillRect(pixmap.rect(), QColor(0xd6, 0xe2, 0xf2));
+		painter.end();
+		return QIcon(pixmap);
+	};
+	m_ui->nav_play_button->setIcon(tinted_icon(QStringLiteral(":/icons/grid-view.svg")));
+	m_ui->nav_trophies_button->setIcon(tinted_icon(QStringLiteral(":/icons/trophy.svg")));
+	m_ui->nav_settings_button->setIcon(tinted_icon(QStringLiteral(":/icons/global-settings.svg")));
+	m_ui->nav_search_button->setIcon(tinted_icon(QStringLiteral(":/icons/search.svg")));
+	m_ui->nav_more_button->setIcon(tinted_icon(QStringLiteral(":/icons/sort.svg")));
+
+	connect(m_ui->nav_play_button, &QToolButton::clicked, this, [this]() {
+		m_ui->nav_play_button->setChecked(true);
+		if (auto* list = m_ui->widget->findChild<QTreeWidget*>(QStringLiteral("cfgs_list"))) {
+			list->setFocus();
+		}
+	});
+	connect(m_ui->nav_trophies_button, &QToolButton::clicked, m_ui->widget,
+	        &ConfigurationListWidget::ViewTrophyOverview);
+	connect(m_ui->nav_settings_button, &QToolButton::clicked, this,
+	        &MainDialogPrivate::ShowSettingsDialog);
+	connect(m_ui->nav_search_button, &QToolButton::clicked, this, [this]() {
+		if (auto* search = m_ui->widget->findChild<QLineEdit*>(QStringLiteral("search_line_edit"))) {
+			search->setFocus();
+			search->selectAll();
+		}
+	});
+	auto* more_menu = new QMenu(m_ui->nav_more_button);
+	for (QAction* menu_action: menubar->actions()) {
+		auto* menu = menu_action->menu();
+		if (menu != nullptr) {
+			more_menu->addAction(menu_action);
+		}
+		// Preserve keyboard shortcuts now that the menu bar itself is hidden.
+		if (menu == nullptr) {
+			continue;
+		}
+		for (QAction* action: menu->actions()) {
+			const QKeySequence keys = action->shortcut();
+			if (keys.isEmpty()) {
+				continue;
+			}
+			action->setShortcut(QKeySequence());
+			auto* shortcut = new QShortcut(keys, m_main_dialog);
+			connect(shortcut, &QShortcut::activated, action, &QAction::trigger);
+		}
+	}
+	m_ui->nav_more_button->setMenu(more_menu);
 }
 
 void MainDialogPrivate::SetupStatusBar() {

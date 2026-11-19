@@ -3,6 +3,7 @@
 
 #include "gameContent.h"
 
+#include <QAbstractItemModel>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QListView>
@@ -165,6 +166,61 @@ private:
 	static constexpr int CARD_PADDING = 8;
 };
 
+// Large tile for the always-visible home row. It shares the library's model and
+// selection, so the hero, list and grid always agree on the current game.
+class GameHeroDelegate: public QStyledItemDelegate {
+public:
+	using QStyledItemDelegate::QStyledItemDelegate;
+
+	QSize sizeHint(const QStyleOptionViewItem& option,
+	               const QModelIndex& /*index*/) const override {
+		return option.decorationSize +
+		       QSize(2 * HERO_PADDING, 2 * HERO_PADDING + option.fontMetrics.lineSpacing());
+	}
+
+	void paint(QPainter* painter, const QStyleOptionViewItem& option,
+	           const QModelIndex& index) const override {
+		const bool selected = option.state.testFlag(QStyle::State_Selected);
+		const bool hovered  = option.state.testFlag(QStyle::State_MouseOver);
+
+		painter->save();
+		painter->setRenderHint(QPainter::Antialiasing);
+
+		// Focused tiles get a soft PS-blue glow, like the PS5 home screen.
+		if (selected || hovered) {
+			painter->setPen(Qt::NoPen);
+			painter->setBrush(selected ? QColor(0x00, 0x70, 0xd1, hovered ? 95 : 65)
+			                           : QColor(0xff, 0xff, 0xff, 16));
+			painter->drawRoundedRect(QRectF(option.rect).adjusted(2, 2, -2, -2), 10, 10);
+		}
+
+		const QRect cover(option.rect.topLeft() + QPoint(HERO_PADDING, HERO_PADDING),
+		                  option.decorationSize);
+		painter->setPen(selected ? QPen(QColor(0x00, 0x70, 0xd1), 3)
+		                         : QPen(QColor(0xff, 0xff, 0xff, 30), 1));
+		painter->setBrush(Qt::NoBrush);
+		painter->drawRoundedRect(QRectF(cover).adjusted(1, 1, -1, -1), 8, 8);
+		index.data(Qt::DecorationRole).value<QIcon>().paint(painter, cover);
+		if (index.data(Qt::UserRole).toBool()) {
+			PaintProBadge(painter, cover, option.font, QStringLiteral("PS5 PRO"));
+		}
+
+		QRect line(cover.left(), cover.bottom() + 6, cover.width(),
+		           option.fontMetrics.lineSpacing());
+		auto  title_font = option.font;
+		title_font.setBold(true);
+		painter->setFont(title_font);
+		painter->setPen(QColor(0xf3, 0xf6, 0xfb));
+		painter->drawText(line, Qt::AlignHCenter | Qt::AlignVCenter,
+		                  painter->fontMetrics().elidedText(index.data().toString(),
+		                                                    Qt::ElideRight, line.width()));
+		painter->restore();
+	}
+
+private:
+	static constexpr int HERO_PADDING = 10;
+};
+
 // The list's name cell, with the PS5 Pro badge over its icon.
 class GameListNameDelegate: public QStyledItemDelegate {
 public:
@@ -199,6 +255,24 @@ inline void SetupGameGrid(QTreeWidget* list, QListView* grid) {
 	grid->setItemDelegate(new GameGridDelegate(grid));
 	// A card also shows other columns (the size arrives late), which the grid does not repaint on.
 	QObject::connect(list->model(), &QAbstractItemModel::dataChanged, grid->viewport(),
+	                 qOverload<>(&QWidget::update));
+}
+
+// Horizontal home-row view: same model/selection as the library, larger tiles.
+inline void SetupGameHero(QListView* hero, QTreeWidget* list) {
+	hero->setModel(list->model());
+	hero->setSelectionModel(list->selectionModel());
+	hero->setViewMode(QListView::IconMode);
+	hero->setFlow(QListView::LeftToRight);
+	hero->setMovement(QListView::Static);
+	hero->setWrapping(false);
+	hero->setResizeMode(QListView::Fixed);
+	hero->setSpacing(12);
+	hero->setUniformItemSizes(true);
+	hero->setIconSize(QSize(160, 160));
+	hero->setItemDelegate(new GameHeroDelegate(hero));
+	// Late-arriving metadata (size/status) must repaint the hero tile too.
+	QObject::connect(list->model(), &QAbstractItemModel::dataChanged, hero->viewport(),
 	                 qOverload<>(&QWidget::update));
 }
 

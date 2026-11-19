@@ -33,6 +33,55 @@
     <number>0</number>
    </property>
    <item row="0" column="0">
+    <widget class="QListView" name="hero_row">
+     <property name="accessibleName">
+      <string>Game hero row</string>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>230</height>
+      </size>
+     </property>
+     <property name="maximumSize">
+      <size>
+       <width>16777215</width>
+       <height>230</height>
+      </size>
+     </property>
+     <property name="frameShape">
+      <enum>QFrame::NoFrame</enum>
+     </property>
+     <property name="flow">
+      <enum>QListView::LeftToRight</enum>
+     </property>
+     <property name="movement">
+      <enum>QListView::Static</enum>
+     </property>
+     <property name="wrapping">
+      <bool>false</bool>
+     </property>
+     <property name="resizeMode">
+      <enum>QListView::Fixed</enum>
+     </property>
+     <property name="spacing">
+      <number>12</number>
+     </property>
+     <property name="uniformItemSizes">
+      <bool>true</bool>
+     </property>
+     <property name="horizontalScrollMode">
+      <enum>QAbstractItemView::ScrollPerPixel</enum>
+     </property>
+     <property name="verticalScrollBarPolicy">
+      <enum>Qt::ScrollBarAlwaysOff</enum>
+     </property>
+     <property name="styleSheet">
+      <string notr="true">#hero_row { background: transparent; }</string>
+     </property>
+    </widget>
+   </item>
+   <item row="1" column="0">
     <layout class="QHBoxLayout" name="horizontalLayout_2">
      <property name="spacing">
       <number>2</number>
@@ -373,7 +422,7 @@
      </item>
     </layout>
    </item>
-   <item row="1" column="0">
+   <item row="2" column="0">
     <widget class="GameViews" name="game_views">
      <widget class="QTreeWidget" name="cfgs_list">
       <property name="accessibleName">
@@ -443,6 +492,124 @@
        <string notr="true">#cfgs_grid { background: transparent; }</string>
       </property>
      </widget>
+    </widget>
+   </item>
+   <item row="3" column="0">
+    <widget class="QFrame" name="game_detail_panel">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>104</height>
+      </size>
+     </property>
+     <property name="maximumSize">
+      <size>
+       <width>16777215</width>
+       <height>104</height>
+      </size>
+     </property>
+     <property name="frameShape">
+      <enum>QFrame::NoFrame</enum>
+     </property>
+     <property name="frameShadow">
+      <enum>QFrame::Plain</enum>
+     </property>
+     <layout class="QHBoxLayout" name="detailLayout">
+      <property name="spacing">
+       <number>14</number>
+      </property>
+      <property name="leftMargin">
+       <number>14</number>
+      </property>
+      <property name="topMargin">
+       <number>8</number>
+      </property>
+      <property name="rightMargin">
+       <number>14</number>
+      </property>
+      <property name="bottomMargin">
+       <number>8</number>
+      </property>
+      <item>
+       <widget class="QLabel" name="detail_icon">
+        <property name="minimumSize">
+         <size>
+          <width>72</width>
+          <height>72</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>72</width>
+          <height>72</height>
+         </size>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="scaledContents">
+         <bool>true</bool>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <layout class="QVBoxLayout" name="detailTextLayout">
+        <property name="spacing">
+         <number>3</number>
+        </property>
+        <item>
+         <widget class="QLabel" name="detail_title">
+          <property name="text">
+           <string>Select a game</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="detail_meta">
+          <property name="text">
+           <string>Choose a title to see its details</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <spacer name="detailSpacer">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+      <item>
+       <widget class="QLabel" name="detail_status">
+        <property name="text">
+         <string/>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="detail_launch_button">
+        <property name="text">
+         <string>Launch Game</string>
+        </property>
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
     </widget>
    </item>
   </layout>

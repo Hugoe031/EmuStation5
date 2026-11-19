@@ -19,9 +19,10 @@
 
 namespace {
 
-constexpr int ACCENT_RED   = 0x2a;
-constexpr int ACCENT_GREEN = 0x82;
-constexpr int ACCENT_BLUE  = 0xda;
+// PlayStation-style blue accent, used for focus rings, selection and links.
+constexpr int ACCENT_RED   = 0x00;
+constexpr int ACCENT_GREEN = 0x70;
+constexpr int ACCENT_BLUE  = 0xd1;
 
 QString g_dark_stylesheet;
 QString g_light_stylesheet;
@@ -62,7 +63,7 @@ void ApplyTitleBarAttributes(BOOL dark, COLORREF caption) {
 }
 
 void ApplyDarkTitleBar() {
-	ApplyTitleBarAttributes(TRUE, RGB(0x19, 0x19, 0x19));
+	ApplyTitleBarAttributes(TRUE, RGB(0x0e, 0x11, 0x17));
 }
 
 void ApplyLightTitleBar() {
@@ -99,21 +100,22 @@ QPalette DarkPalette() {
 	const QColor muted(0x9a, 0x9a, 0x9a);
 	const QColor disabled(0x6e, 0x6e, 0x6e);
 
-	palette.setColor(QPalette::Window, QColor(0x1e, 0x1e, 0x1e));
+	// Deep blue-charcoal with a faint blue tint, matching the PS5 home screen.
+	palette.setColor(QPalette::Window, QColor(0x0e, 0x11, 0x17));
 	palette.setColor(QPalette::WindowText, text);
-	palette.setColor(QPalette::Base, QColor(0x24, 0x24, 0x24));
-	palette.setColor(QPalette::AlternateBase, QColor(0x29, 0x29, 0x29));
-	palette.setColor(QPalette::ToolTipBase, QColor(0x2b, 0x2b, 0x2b));
+	palette.setColor(QPalette::Base, QColor(0x18, 0x1d, 0x27));
+	palette.setColor(QPalette::AlternateBase, QColor(0x1e, 0x24, 0x30));
+	palette.setColor(QPalette::ToolTipBase, QColor(0x18, 0x1d, 0x27));
 	palette.setColor(QPalette::ToolTipText, text);
 	palette.setColor(QPalette::Text, text);
 	palette.setColor(QPalette::PlaceholderText, muted);
-	palette.setColor(QPalette::Button, QColor(0x2d, 0x2d, 0x2d));
+	palette.setColor(QPalette::Button, QColor(0x1b, 0x21, 0x2b));
 	palette.setColor(QPalette::ButtonText, text);
 	palette.setColor(QPalette::BrightText, Qt::white);
-	palette.setColor(QPalette::Light, QColor(0x46, 0x46, 0x46));
-	palette.setColor(QPalette::Midlight, QColor(0x38, 0x38, 0x38));
-	palette.setColor(QPalette::Mid, QColor(0x3a, 0x3a, 0x3a));
-	palette.setColor(QPalette::Dark, QColor(0x19, 0x19, 0x19));
+	palette.setColor(QPalette::Light, QColor(0x35, 0x3e, 0x4d));
+	palette.setColor(QPalette::Midlight, QColor(0x27, 0x2e, 0x3a));
+	palette.setColor(QPalette::Mid, QColor(0x2a, 0x31, 0x3d));
+	palette.setColor(QPalette::Dark, QColor(0x0b, 0x0e, 0x13));
 	palette.setColor(QPalette::Shadow, Qt::black);
 	palette.setColor(QPalette::Link, QColor(ACCENT_RED, ACCENT_GREEN, ACCENT_BLUE));
 	palette.setColor(QPalette::LinkVisited, QColor(0x7a, 0xb8, 0xf0));
@@ -125,7 +127,7 @@ QPalette DarkPalette() {
 	}
 	palette.setColor(QPalette::Disabled, QPalette::Highlight, QColor(0x33, 0x33, 0x33));
 	palette.setColor(QPalette::Disabled, QPalette::HighlightedText, disabled);
-	palette.setColor(QPalette::Disabled, QPalette::Base, QColor(0x1e, 0x1e, 0x1e));
+	palette.setColor(QPalette::Disabled, QPalette::Base, QColor(0x0e, 0x11, 0x17));
 
 	return palette;
 }

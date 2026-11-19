@@ -26,6 +26,7 @@ public:
 	// Stores preloaded icon bytes (e.g. read off the UI thread) so the next
 	// Update(true) can skip re-reading the image from disk or an archive.
 	void SetIconData(const QByteArray& icon_data) { m_icon_data = icon_data; }
+	[[nodiscard]] const QByteArray&    GetIconData() const { return m_icon_data; }
 
 	Configuration&                     GetInfo() { return *m_info; }
 	[[nodiscard]] const Configuration& GetInfo() const { return *m_info; }

@@ -59,13 +59,13 @@
       <property name="minimumSize">
        <size>
         <width>0</width>
-        <height>56</height>
+        <height>72</height>
        </size>
       </property>
       <property name="maximumSize">
        <size>
         <width>16777215</width>
-        <height>56</height>
+        <height>72</height>
        </size>
       </property>
       <layout class="QHBoxLayout" name="headerLayout">
@@ -88,14 +88,14 @@
         <widget class="QLabel" name="brand_mark">
          <property name="minimumSize">
           <size>
-           <width>38</width>
-           <height>38</height>
+           <width>44</width>
+           <height>44</height>
           </size>
          </property>
          <property name="maximumSize">
           <size>
-           <width>38</width>
-           <height>38</height>
+           <width>44</width>
+           <height>44</height>
           </size>
          </property>
          <property name="text">
@@ -184,43 +184,205 @@
      </widget>
     </item>
     <item>
-     <widget class="QWidget" name="game_area" native="true">
-      <property name="sizePolicy">
-       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-        <horstretch>1</horstretch>
-        <verstretch>1</verstretch>
-       </sizepolicy>
-      </property>
-      <layout class="QVBoxLayout" name="gameAreaLayout">
+     <widget class="QWidget" name="content_area" native="true">
+      <layout class="QHBoxLayout" name="contentLayout">
        <property name="spacing">
         <number>0</number>
        </property>
        <property name="leftMargin">
-        <number>14</number>
+        <number>0</number>
        </property>
        <property name="topMargin">
-        <number>12</number>
+        <number>0</number>
        </property>
        <property name="rightMargin">
-        <number>14</number>
+        <number>0</number>
        </property>
        <property name="bottomMargin">
-        <number>12</number>
+        <number>0</number>
        </property>
        <item>
-        <widget class="ConfigurationListWidget" name="widget" native="true">
+        <widget class="QFrame" name="ps_nav_rail">
+         <property name="minimumSize">
+          <size>
+           <width>88</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>88</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Plain</enum>
+         </property>
+         <layout class="QVBoxLayout" name="navLayout">
+          <property name="spacing">
+           <number>6</number>
+          </property>
+          <property name="leftMargin">
+           <number>6</number>
+          </property>
+          <property name="topMargin">
+           <number>12</number>
+          </property>
+          <property name="rightMargin">
+           <number>6</number>
+          </property>
+          <property name="bottomMargin">
+           <number>12</number>
+          </property>
+          <item>
+           <widget class="QToolButton" name="nav_play_button">
+            <property name="text">
+             <string>Games</string>
+            </property>
+            <property name="iconSize">
+             <size>
+              <width>28</width>
+              <height>28</height>
+             </size>
+            </property>
+            <property name="toolButtonStyle">
+             <enum>Qt::ToolButtonTextUnderIcon</enum>
+            </property>
+            <property name="checkable">
+             <bool>true</bool>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QToolButton" name="nav_trophies_button">
+            <property name="text">
+             <string>Trophies</string>
+            </property>
+            <property name="iconSize">
+             <size>
+              <width>28</width>
+              <height>28</height>
+             </size>
+            </property>
+            <property name="toolButtonStyle">
+             <enum>Qt::ToolButtonTextUnderIcon</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QToolButton" name="nav_settings_button">
+            <property name="text">
+             <string>Settings</string>
+            </property>
+            <property name="iconSize">
+             <size>
+              <width>28</width>
+              <height>28</height>
+             </size>
+            </property>
+            <property name="toolButtonStyle">
+             <enum>Qt::ToolButtonTextUnderIcon</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QToolButton" name="nav_search_button">
+            <property name="text">
+             <string>Search</string>
+            </property>
+            <property name="iconSize">
+             <size>
+              <width>28</width>
+              <height>28</height>
+             </size>
+            </property>
+            <property name="toolButtonStyle">
+             <enum>Qt::ToolButtonTextUnderIcon</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="navSpacer">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>40</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QToolButton" name="nav_more_button">
+            <property name="text">
+             <string>More</string>
+            </property>
+            <property name="iconSize">
+             <size>
+              <width>28</width>
+              <height>28</height>
+             </size>
+            </property>
+            <property name="toolButtonStyle">
+             <enum>Qt::ToolButtonTextUnderIcon</enum>
+            </property>
+            <property name="popupMode">
+             <enum>QToolButton::InstantPopup</enum>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QWidget" name="game_area" native="true">
          <property name="sizePolicy">
           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
            <horstretch>1</horstretch>
            <verstretch>1</verstretch>
           </sizepolicy>
          </property>
-         <property name="minimumSize">
-          <size>
-           <width>0</width>
-           <height>280</height>
-          </size>
-         </property>
+         <layout class="QVBoxLayout" name="gameAreaLayout">
+          <property name="spacing">
+           <number>0</number>
+          </property>
+          <property name="leftMargin">
+           <number>14</number>
+          </property>
+          <property name="topMargin">
+           <number>12</number>
+          </property>
+          <property name="rightMargin">
+           <number>14</number>
+          </property>
+          <property name="bottomMargin">
+           <number>12</number>
+          </property>
+          <item>
+           <widget class="ConfigurationListWidget" name="widget" native="true">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+              <horstretch>1</horstretch>
+              <verstretch>1</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>280</height>
+             </size>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </widget>
        </item>
       </layout>
