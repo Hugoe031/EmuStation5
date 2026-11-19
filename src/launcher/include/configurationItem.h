@@ -3,6 +3,7 @@
 
 #include <QIcon>
 #include <QObject>
+#include <QByteArray>
 #include <QTreeWidgetItem>
 
 #include <memory>
@@ -16,11 +17,15 @@ class QWidget;
 class Configuration;
 class ConfigurationItem: public QObject, public QTreeWidgetItem {
 public:
-	explicit ConfigurationItem(std::unique_ptr<Configuration> info, QTreeWidget* parent);
+	explicit ConfigurationItem(std::unique_ptr<Configuration> info, QTreeWidget* parent,
+	                           const QByteArray& icon_data = {});
 	~ConfigurationItem() override;
 
 	void Update(bool reload_icon = false);
 	bool operator<(const QTreeWidgetItem& other) const override;
+	// Stores preloaded icon bytes (e.g. read off the UI thread) so the next
+	// Update(true) can skip re-reading the image from disk or an archive.
+	void SetIconData(const QByteArray& icon_data) { m_icon_data = icon_data; }
 
 	Configuration&                     GetInfo() { return *m_info; }
 	[[nodiscard]] const Configuration& GetInfo() const { return *m_info; }
@@ -37,6 +42,7 @@ private:
 
 	std::unique_ptr<Configuration> m_info;
 	QIcon                          m_icon;
+	QByteArray                     m_icon_data;
 	bool                           m_running          = false;
 	QComboBox*                     m_status_combo     = nullptr;
 	QLabel*                        m_status_indicator = nullptr;

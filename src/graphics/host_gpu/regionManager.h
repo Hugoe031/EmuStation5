@@ -35,6 +35,7 @@ public:
 			EXIT_NOT_IMPLEMENTED(m_owner.load(std::memory_order_relaxed) == thread);
 			// Wait on reads, so the holder's cache line is not written until the lock is free.
 			while (m_lock.test(std::memory_order_relaxed)) {
+				EXIT_NOT_IMPLEMENTED(m_owner.load(std::memory_order_relaxed) == thread);
 #if defined(__x86_64__) || defined(_M_X64)
 				_mm_pause();
 #elif defined(_M_ARM64)
@@ -48,6 +49,8 @@ public:
 	}
 	void unlock() noexcept {
 		EXIT_NOT_IMPLEMENTED(m_owner.load(std::memory_order_relaxed) != CurrentThread());
+		// Clear the owner before releasing the lock: another thread may acquire the lock and set
+		// itself as owner as soon as m_lock is cleared, and a later store here would erase it.
 		m_owner.store(0, std::memory_order_relaxed);
 		m_lock.clear(std::memory_order_release);
 	}

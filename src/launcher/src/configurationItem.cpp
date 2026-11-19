@@ -119,8 +119,9 @@ void MakeTransparent(QWidget* widget) {
 
 } // namespace
 
-ConfigurationItem::ConfigurationItem(std::unique_ptr<Configuration> info, QTreeWidget* parent)
-    : QTreeWidgetItem(parent), m_info(std::move(info)) {
+ConfigurationItem::ConfigurationItem(std::unique_ptr<Configuration> info, QTreeWidget* parent,
+                                     const QByteArray& icon_data)
+    : QTreeWidgetItem(parent), m_info(std::move(info)), m_icon_data(icon_data) {
 	setSizeHint(NameColumn, QSize(0, 72));
 
 	m_status_widget = new QWidget(parent);
@@ -220,8 +221,11 @@ void ConfigurationItem::Update(bool reload_icon) {
 	}
 
 	if (reload_icon) {
-		const auto icon_data = GameContent::ReadFile(
-		    m_info->basedir, QStringLiteral("sce_sys/icon0.png"), GameContent::MaxImageSize);
+		const auto icon_data =
+		    !m_icon_data.isEmpty()
+		        ? m_icon_data
+		        : GameContent::ReadFile(m_info->basedir, QStringLiteral("sce_sys/icon0.png"),
+		                                GameContent::MaxImageSize);
 		QPixmap icon;
 		m_icon = !icon_data.isEmpty() && icon.loadFromData(icon_data) ? QIcon(icon) : QIcon {};
 	}

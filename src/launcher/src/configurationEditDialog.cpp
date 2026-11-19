@@ -6,6 +6,8 @@
 #include <SDL3/SDL.h>
 
 #include <QAbstractItemView>
+#include <QAbstractButton>
+#include <QAbstractSpinBox>
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
@@ -13,6 +15,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -22,6 +25,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPair>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScreen>
@@ -30,6 +34,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QStyle>
+#include <QTabWidget>
 #include <QToolButton>
 #include <QTreeView>
 #include <QVBoxLayout>
@@ -46,7 +51,89 @@ constexpr char SETTINGS_CFG_DIALOG[]               = "ConfigurationEditDialog";
 constexpr char SETTINGS_CFG_LAST_GEOMETRY[]        = "geometry";
 constexpr int  GLOBAL_SETTINGS_GAME_DIRS_MIN_WIDTH = 400;
 
+static bool IsInteractiveWidget(const QWidget* widget) {
+	return qobject_cast<const QAbstractButton*>(widget) != nullptr ||
+	       qobject_cast<const QAbstractSpinBox*>(widget) != nullptr ||
+	       qobject_cast<const QComboBox*>(widget) != nullptr ||
+	       qobject_cast<const QLineEdit*>(widget) != nullptr ||
+	       qobject_cast<const QSlider*>(widget) != nullptr;
+}
+
+// Strip mnemonics and the trailing colon from a static label, leaving clean text
+// usable as an accessible name.
+static QString AccessibleText(const QString& raw) {
+	QString text = raw;
+	text.remove(QLatin1Char('&'));
+	text = text.trimmed();
+	if (text.endsWith(QLatin1Char(':'))) {
+		text.chop(1);
+	}
+	return text.trimmed();
+}
+
+// Walk the field side of a form/grid row, which may hold a bare widget, a layout
+// of widgets, or nested layouts. Interactive descendants inherit the label text.
+static void PropagateName(QLayoutItem* item, const QString& name) {
+	if (item == nullptr || name.isEmpty()) {
+		return;
+	}
+	if (auto* widget = item->widget()) {
+		if (IsInteractiveWidget(widget) && widget->accessibleName().isEmpty()) {
+			widget->setAccessibleName(name);
+		}
+		return;
+	}
+	if (auto* layout = item->layout()) {
+		for (int i = 0; i < layout->count(); ++i) {
+			PropagateName(layout->itemAt(i), name);
+		}
+	}
+}
+
+static void ApplyAccessibility(QWidget* root) {
+	// Static labels in QFormLayout rows become the accessible names of the
+	// controls next to them, for both Qt buddies (keyboard/menus) and screen
+	// readers (AT tree).
+	for (const QFormLayout* form : root->findChildren<QFormLayout*>()) {
+		for (int row = 0; row < form->rowCount(); ++row) {
+			auto* label_item = form->itemAt(row, QFormLayout::LabelRole);
+			auto* field_item = form->itemAt(row, QFormLayout::FieldRole);
+			auto* label      = qobject_cast<QLabel*>(label_item != nullptr ? label_item->widget()
+			                                          : nullptr);
+			if (label == nullptr) {
+				continue;
+			}
+			const QString name = AccessibleText(label->text());
+			if (field_item != nullptr && field_item->widget() != nullptr) {
+				label->setBuddy(field_item->widget());
+			}
+			PropagateName(field_item, name);
+		}
+	}
+
+	// Manually-paired label/field rows in the debug grid get the same treatment.
+	const QList<QPair<QString, QObject*>> labeled = {
+	    {QObject::tr("Shader log direction"), root->findChild<QComboBox*>(QStringLiteral("comboBox_shader_log_direction"))},
+	    {QObject::tr("Shader log folder"), root->findChild<MandatoryLineEdit*>(QStringLiteral("lineEdit_shader_log_folder"))},
+	    {QObject::tr("Printf direction"), root->findChild<QComboBox*>(QStringLiteral("comboBox_printf_direction"))},
+	    {QObject::tr("Printf file"), root->findChild<MandatoryLineEdit*>(QStringLiteral("lineEdit_printf_file"))},
+	    {QObject::tr("Command buffer dump folder"), root->findChild<MandatoryLineEdit*>(QStringLiteral("lineEdit_cmd_dump_folder"))},
+	};
+	for (const auto& [name, object] : labeled) {
+		if (auto* widget = qobject_cast<QWidget*>(object)) {
+			widget->setAccessibleName(name);
+		}
+	}
+
+	// Bottom button bar keeps its visible text; only add context for the icon-
+	// less primary actions so screen readers announce intent.
+	if (auto* tabs = root->findChild<QTabWidget*>(QStringLiteral("settings_tabs"))) {
+		tabs->setAccessibleName(QObject::tr("Settings pages"));
+	}
+}
+
 static void UpdateControllerColorButton(QPushButton* button, const QString& hex) {
+
 	const QColor color(hex);
 	if (!color.isValid()) {
 		button->setProperty("controllerColor", QString {});
@@ -127,6 +214,7 @@ ConfigurationEditDialog::ConfigurationEditDialog(Configuration& info, QWidget* p
     : QDialog(parent, Qt::WindowMaximizeButtonHint | Qt::WindowCloseButtonHint),
       m_ui(new Ui::ConfigurationEditDialog), m_info(info) {
 	m_ui->setupUi(this);
+	ApplyAccessibility(this);
 	MakeTabsScrollable();
 	InitGameDirectories();
 	m_ui->controller_group->setVisible(false);

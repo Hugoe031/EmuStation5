@@ -22,11 +22,11 @@ constexpr qint64 MAX_METADATA_SIZE = 2 * 1024 * 1024;
 
 QString LauncherRelativePath() {
 #if defined(_WIN32)
-	return QStringLiteral("kyty_launcher.exe");
+	return QStringLiteral("EmuStation5.exe");
 #elif defined(__APPLE__)
-	return QStringLiteral("KytyPS5.app/Contents/MacOS/KytyPS5");
+	return QStringLiteral("EmuStation5.app/Contents/MacOS/EmuStation5");
 #else
-	return QStringLiteral("kyty_launcher");
+	return QStringLiteral("EmuStation5");
 #endif
 }
 
@@ -34,7 +34,7 @@ QString InstallDirectory() {
 	QDir dir(QCoreApplication::applicationDirPath());
 #if defined(__APPLE__)
 	// Official macOS releases are a bundle; never update a flat development build.
-	if (!dir.cdUp() || !dir.cdUp() || dir.dirName() != QStringLiteral("KytyPS5.app") ||
+	if (!dir.cdUp() || !dir.cdUp() || dir.dirName() != QStringLiteral("EmuStation5.app") ||
 	    !dir.cdUp()) {
 		return {};
 	}
@@ -54,7 +54,7 @@ QNetworkRequest Request(const QUrl& url) {
 	QNetworkRequest request(url);
 	request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
 	                     QNetworkRequest::NoLessSafeRedirectPolicy);
-	request.setRawHeader("User-Agent", "KytyPS5-Updater");
+	request.setRawHeader("User-Agent", "EmuStation5-Updater");
 	request.setTransferTimeout(30000);
 	return request;
 }
@@ -87,8 +87,12 @@ UpdateChecker::~UpdateChecker() {
 }
 
 bool UpdateChecker::IsSupported() {
-#if defined(KYTY_OFFICIAL_BUILD) && defined(NDEBUG)
-	return !QString::fromLatin1(KYTY_GIT_HASH).endsWith(QStringLiteral("-dirty")) &&
+	// EmuStation5 checks its own releases (see updateRelease.h). Only tagged release builds
+	// participate: a development build has no embedded tag to compare against, and an
+	// uncommitted ("-dirty") tree must never auto-update.
+#if (defined(KYTY_OFFICIAL_BUILD) || defined(KYTY_FORK_BUILD)) && defined(NDEBUG)
+	constexpr bool updates_enabled = true;
+	return updates_enabled && !QString::fromLatin1(KYTY_GIT_HASH).endsWith(QStringLiteral("-dirty")) &&
 	       !UpdateRelease::PlatformSuffix().isEmpty();
 #else
 	return false;
@@ -133,7 +137,7 @@ void UpdateChecker::ShowPreviousResult(QWidget* parent) {
 		message = success ? tr("The update was installed successfully.")
 		                  : tr("The update could not be installed.");
 	}
-	QMessageBox(success ? QMessageBox::Information : QMessageBox::Warning, tr("KytyPS5 Update"),
+	QMessageBox(success ? QMessageBox::Information : QMessageBox::Warning, tr("EmuStation5 Update"),
 	            message, QMessageBox::Ok, parent)
 	    .exec();
 }
@@ -216,7 +220,7 @@ void UpdateChecker::CheckCurrent(const UpdateRelease::Info& current, bool manual
 }
 
 void UpdateChecker::OfferUpdate() {
-	QMessageBox question(QMessageBox::Information, tr("KytyPS5 Update"),
+	QMessageBox question(QMessageBox::Information, tr("EmuStation5 Update"),
 	                     tr("Version %1 is available.\n\nCurrent: %2\n\n"
 	                        "Download and install it now? The launcher will restart. Your settings "
 	                        "and games are kept.")
@@ -251,7 +255,7 @@ void UpdateChecker::Download() {
 	m_workspace = std::make_unique<QTemporaryDir>(
 	    QDir(directory).filePath(QStringLiteral(".kyty-update-XXXXXX")));
 	if (!m_workspace->isValid()) {
-		Finish(tr("The installation folder is not writable. Move KytyPS5 to a writable folder and "
+		Finish(tr("The installation folder is not writable. Move EmuStation5 to a writable folder and "
 		          "try again."));
 		return;
 	}
@@ -273,7 +277,7 @@ void UpdateChecker::Download() {
 	emit InstallingChanged(true);
 	m_progress = new QProgressDialog(tr("Downloading %1…").arg(m_release.tag), tr("Cancel"), 0, 100,
 	                                 m_parent);
-	m_progress->setWindowTitle(tr("KytyPS5 Update"));
+	m_progress->setWindowTitle(tr("EmuStation5 Update"));
 	m_progress->setWindowModality(Qt::ApplicationModal);
 	m_progress->setAutoClose(false);
 	m_progress->setAutoReset(false);
@@ -424,11 +428,11 @@ void UpdateChecker::Finish(QString error, bool report) {
 	if (error.isEmpty()) {
 		return;
 	}
-	qWarning() << "KytyPS5 updater:" << error;
+	qWarning() << "EmuStation5 updater:" << error;
 	if (!report) {
 		return;
 	}
-	QMessageBox message(QMessageBox::Warning, tr("KytyPS5 Update"), error, QMessageBox::Close,
+	QMessageBox message(QMessageBox::Warning, tr("EmuStation5 Update"), error, QMessageBox::Close,
 	                    m_parent);
 	if (!release_page.isEmpty()) {
 		message.addButton(QMessageBox::Open);

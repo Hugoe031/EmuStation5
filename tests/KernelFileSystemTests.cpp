@@ -1,6 +1,3 @@
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_main.h>
-
 #include "common/emulatorConfig.h"
 #include "common/archive.h"
 #include "common/file.h"
@@ -11,7 +8,6 @@
 #include "common/subsystems.h"
 #include "common/threads.h"
 #include "common/stringUtils.h"
-#include "graphics/presentation/window/windowInternal.h"
 #include "kernel/eventQueue.h"
 #include "kernel/fileSystem.h"
 #include "kernel/pthread.h"
@@ -734,7 +730,8 @@ void TestStatTimes() {
   constexpr char Path[] = "/savedata0/stat-times.dat";
   const int fd = FileSystem::KernelOpen(Path, 0x602, 0777);
   Check(fd >= 3, "create stat time fixture");
-  SetUnixWriteTime(FileSystem::GetRealFilename(Path), 1700000000123456700);
+  Check(SetUnixWriteTime(FileSystem::GetRealFilename(Path), 1700000000123456700),
+        "set stat time fixture");
   FileSystem::FileStat by_path {};
   FileSystem::FileStat by_fd {};
   Check(FileSystem::KernelStat(Path, &by_path) == OK && FileSystem::KernelFstat(fd, &by_fd) == OK &&
@@ -802,13 +799,19 @@ void TestSaveTruncate() {
             std::all_of(bytes.begin() + 3, bytes.end(), [](char byte) { return byte == 0; }) &&
             FileSystem::KernelLseek(fd, 0, 1) == sizeof(Payload) - 1,
         "path truncate extends with zero bytes and preserves the descriptor position");
-  Check(truncate(Path, -1) == Kernel::KERNEL_ERROR_EINVAL &&
-            truncate(nullptr, 0) == Kernel::KERNEL_ERROR_EFAULT &&
-            truncate("truncate-save.dat", 0) == Kernel::KERNEL_ERROR_EINVAL &&
-            truncate("/savedata0/missing-save.dat", 0) == Kernel::KERNEL_ERROR_ENOENT &&
-            truncate("/savedata0", 0) == Kernel::KERNEL_ERROR_EISDIR &&
-            truncate("/savedata0/truncate-save.dat/child", 0) == Kernel::KERNEL_ERROR_ENOTDIR &&
-            FileSystem::KernelFstat(fd, &stat) == OK && stat.st_size == bytes.size() &&
+  Check(truncate(Path, -1) == Kernel::KERNEL_ERROR_EINVAL,
+        "path truncate rejects a negative length");
+  Check(truncate(nullptr, 0) == Kernel::KERNEL_ERROR_EFAULT,
+        "path truncate rejects a null path");
+  Check(truncate("truncate-save.dat", 0) == Kernel::KERNEL_ERROR_EINVAL,
+        "path truncate requires an absolute path");
+  Check(truncate("/savedata0/missing-save.dat", 0) == Kernel::KERNEL_ERROR_ENOENT,
+        "path truncate reports a missing file");
+  Check(truncate("/savedata0", 0) == Kernel::KERNEL_ERROR_EISDIR,
+        "path truncate rejects a directory");
+  Check(truncate("/savedata0/truncate-save.dat/child", 0) == Kernel::KERNEL_ERROR_ENOTDIR,
+        "path truncate reports a non-directory parent");
+  Check(FileSystem::KernelFstat(fd, &stat) == OK && stat.st_size == bytes.size() &&
             FileSystem::KernelLseek(fd, 0, 1) == sizeof(Payload) - 1,
         "path truncate errors preserve file size and descriptor position");
   Check(truncate("/dev/urandom", 0) == OK,
@@ -1898,7 +1901,8 @@ void CheckAprPaths(const std::filesystem::path &root) {
   Check(resolve(unterminated.data(), paths, 1, ids, sizes, &error_index) == -1 &&
             *Libs::Posix::GetErrorAddr() == Libs::Posix::POSIX_ENAMETOOLONG,
         "APR rejects an unterminated prefix");
-  SetUnixWriteTime(root / collision_paths[0], 1700000000123456700);
+  Check(SetUnixWriteTime(root / collision_paths[0], 1700000000123456700),
+        "set collision fixture time");
   CheckAmprOrdering(symbols, collision_ids[0]);
   FileSystem::Umount("/app0");
 }
@@ -2187,10 +2191,11 @@ void TestNetCtlHostIpv4() {
 
 template <int Mode>
 void KYTY_SYSV_ABI RecordNpState(int user_id, uint32_t state, void* arg) {
-  auto& event = *static_cast<std::array<int, 3>*>(arg);
+  auto& event = *static_cast<std::array<int, 4>*>(arg);
   ++event[0];
   event[1] = user_id;
   event[2] = static_cast<int>(state);
+  event[3] = Mode;
 }
 
 void TestNpEmulation() {
@@ -2241,7 +2246,7 @@ void TestNpEmulation() {
   options.printf_direction = Config::LogDirection::Silent;
   Check(!options.network_connected && !options.psn_emulation_enabled,
         "host networking and PSN emulation both require explicit opt-in");
-  static std::array<std::array<int, 3>, 4> events {};
+  static std::array<std::array<int, 4>, 4> events {};
   const std::array<NpStateCallbackA, 4> callbacks {
       RecordNpState<0>, RecordNpState<1>, RecordNpState<2>, RecordNpState<3>};
   int mode = 0;
@@ -2262,9 +2267,11 @@ void TestNpEmulation() {
       previous_network_state = network_state;
       const bool connected = network_state == 3;
 
-      Check(NpRegisterStateCallbackA(callbacks[mode], &events[mode]) > 0 &&
-                NpCheckCallback() == OK && events[mode][0] == 1 &&
-                events[mode][1] == Config::GetUserId() &&
+      Check(NpRegisterStateCallbackA(callbacks[mode], &events[mode]) > 0,
+            "register NP state callback");
+      Check(NpCheckCallback() == OK, "dispatch initial NP state callback");
+      Check(events[mode][0] == 1 && events[mode][1] == Config::GetUserId() &&
+                events[mode][3] == mode &&
                 events[mode][2] == (emulate ? 2 : 1),
             "initial NP callback matches the selected emulated sign-in state");
       ++mode;
@@ -2831,15 +2838,6 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  Check(SDL_InitSubSystem(SDL_INIT_VIDEO), "initialize Vulkan test video");
-  auto graphics = std::make_unique<Libs::Graphics::WindowContext>();
-  graphics->graphic_ctx.screen_width = 64;
-  graphics->graphic_ctx.screen_height = 64;
-  graphics->window = SDL_CreateWindow("KernelFileSystemTests", 64, 64,
-                                      SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN);
-  Check(graphics->window != nullptr, "create hidden Vulkan test window");
-  graphics->CreateVulkan();
-
   TempDirectory temporary;
   CheckOpenFileCoherence(temporary.Path());
   FileSystem::Initialize();
@@ -2874,7 +2872,6 @@ int main(int argc, char** argv) {
   TestNpAuthEmulation();
   TestNpWebApi2Memory();
   TestNpCommerceDialog();
-  graphics.reset();
   subsystems.Destroy();
 
   std::printf("KernelFileSystemTests: all cases passed\n");

@@ -383,6 +383,7 @@ InputMappingDialog::InputMappingDialog(const QStringList& mapping, ControllerPre
 	layout->setSpacing(10);
 
 	m_tabs = new QTabWidget(this);
+	m_tabs->setAccessibleName(tr("Input device pages"));
 	m_tabs->setObjectName(QStringLiteral("inputTabs"));
 	m_tabs->setDocumentMode(true);
 	m_tabs->addTab(BuildTab(true), tr("Gamepad"));
@@ -395,6 +396,9 @@ InputMappingDialog::InputMappingDialog(const QStringList& mapping, ControllerPre
 	touch_layout->addWidget(new QLabel(tr("Particle skin"), touch_group));
 	m_particle_skin = new QComboBox(touch_group);
 	m_particle_skin->setObjectName(QStringLiteral("touchParticleSkin"));
+	m_particle_skin->setAccessibleName(tr("Touch pad particle skin"));
+	m_particle_skin->setAccessibleDescription(
+	    tr("Visual style of the particle trail drawn by the emulated touch pad"));
 	m_particle_skin->addItem(tr("Classic"), QStringLiteral("Classic"));
 	m_particle_skin->addItem(tr("Blue neon"), QStringLiteral("BlueNeon"));
 	m_particle_skin->addItem(tr("Monochrome"), QStringLiteral("Monochrome"));
@@ -554,6 +558,8 @@ QWidget* InputMappingDialog::BuildTab(bool pad) {
 		sensitivity_layout->addWidget(new QLabel(tr("Mouse sensitivity"), page));
 		m_sensitivity = new QDoubleSpinBox(page);
 		m_sensitivity->setObjectName(QStringLiteral("mouseSensitivity"));
+		m_sensitivity->setAccessibleName(tr("Mouse sensitivity"));
+		m_sensitivity->setAccessibleDescription(tr("Mouse look sensitivity multiplier"));
 		m_sensitivity->setRange(0.1, 5.0);
 		m_sensitivity->setSingleStep(0.1);
 		m_sensitivity->setDecimals(1);

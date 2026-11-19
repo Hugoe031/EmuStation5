@@ -5,13 +5,18 @@
   <file alias="input-mapping.svg">icons/input-mapping.svg</file>
   <file alias="refresh.svg">icons/refresh.svg</file>
   <file alias="grid-view.svg">icons/grid-view.svg</file>
+  <file alias="search.svg">icons/search.svg</file>
+  <file alias="sort.svg">icons/sort.svg</file>
   <file alias="remove-configuration.svg">icons/remove-configuration.svg</file>
   <file alias="trophy.svg">icons/trophy.svg</file>
   <file alias="kyty.svg">icons/kyty.svg</file>
   <file alias="kyty-small.svg">icons/kyty-small.svg</file>
+  <file alias="emustation5.png">icons/emustation5.png</file>
+  <file alias="emustation5-small.png">icons/emustation5-small.png</file>
   <file alias="hidden-trophy.png">../../assets/images/hidden-trophy.png</file>
  </qresource>
  <qresource prefix="/styles">
+  <file alias="launcher-light.qss">styles/launcher-light.qss</file>
   <file alias="launcher.qss">styles/launcher.qss</file>
  </qresource>
 </RCC>

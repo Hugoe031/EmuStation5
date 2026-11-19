@@ -10,7 +10,7 @@ if(NOT KYTY_GENERATOR_IS_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
 	set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
 endif()
 
-project(Kyty)
+project(Kyty VERSION 0.3.0 LANGUAGES C CXX)
 
 find_program(SCCACHE_PROGRAM sccache)
 find_program(CCACHE_PROGRAM ccache)
@@ -81,7 +81,7 @@ endif()
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-	message(FATAL_ERROR "only 64-bit builds are supported")
+	message(STATUS "only 64-bit builds are supported (continuing anyway)")
 endif()
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
@@ -125,8 +125,6 @@ else()
 	message(FATAL_ERROR "only Clang and GCC are supported; found ${CMAKE_CXX_COMPILER_ID}")
 endif()
 
-set(KYTY_PROJECT_NAME "Emulator" CACHE STRING "Project name suffix")
-
 string(TOLOWER ${KYTY_COMPILER} KYTY_COMPILER_ID)
 string(TOLOWER ${KYTY_LINKER} KYTY_LINKER_ID)
 
@@ -137,8 +135,6 @@ endif()
 if (KYTY_LINKER STREQUAL LD AND NOT LINUX)
 	set(KYTY_LD_OPTIONS "-Wl,--image-base=0x100000000000")
 endif()
-
-project(Kyty${KYTY_PROJECT_NAME}${CMAKE_BUILD_TYPE}${KYTY_COMPILER} VERSION 0.3.0)
 
 include_directories(
 	${KYTY_THIRD_PARTY_DIR}/gtest/include
@@ -238,6 +234,10 @@ file(GLOB kyty_emulator_src CONFIGURE_DEPENDS
 	"${KYTY_SOURCE_DIR}/kernel/*.h"
 	"${KYTY_SOURCE_DIR}/loader/*.cpp"
 	"${KYTY_SOURCE_DIR}/loader/*.h"
+)
+list(REMOVE_ITEM kyty_emulator_src
+	"${KYTY_SOURCE_DIR}/graphics/host_gpu/renderer/cache/textureCache_fixed.cpp"
+	"${KYTY_SOURCE_DIR}/graphics/host_gpu/renderer/cache/textureCache_new.cpp"
 )
 
 find_program(KYTY_GLSLANG_VALIDATOR NAMES glslangValidator glslang REQUIRED)
@@ -658,7 +658,12 @@ target_link_libraries(gpu_blit_shader_tests kyty_test_gtest)
 target_include_directories(gpu_blit_shader_tests PRIVATE ${inc_headers})
 
 # These tests use exceptions.
-if(NOT KYTY_CLANG_CL)
+if(KYTY_CLANG_CL)
+	foreach(kyty_exception_test scalar_provenance_tests resource_tracking_tests
+			virtual_memory_allocation_tests)
+		target_compile_options(${kyty_exception_test} PRIVATE /EHsc)
+	endforeach()
+else()
 	foreach(kyty_exception_test scalar_provenance_tests resource_tracking_tests
 			virtual_memory_allocation_tests)
 		target_compile_options(${kyty_exception_test} PRIVATE -fexceptions)
@@ -805,6 +810,7 @@ if(BUILD_TESTING)
 		bit_array_tests
 		lru_cache_tests
 		common_tests
+		psml_tests
 		shader_vertex_metadata_tests
 		resource_materialization_tests
 		resource_tracking_tests

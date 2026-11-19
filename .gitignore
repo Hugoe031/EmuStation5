@@ -7,3 +7,10 @@ _Build/
 cmake-build-debug/
 _PipelineCache/
 CMakeUserPresets.json
+
+# Local scratch files (not part of the published source)
+aqtinstall.log
+test_out.txt
+*.bak
+src/graphics/host_gpu/renderer/cache/textureCache_fixed.cpp
+src/graphics/host_gpu/renderer/cache/textureCache_new.cpp

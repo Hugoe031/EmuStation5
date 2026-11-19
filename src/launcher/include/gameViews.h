@@ -65,7 +65,7 @@ private:
 	void UpdateScaledBackground() {
 		m_scaled = m_source.isNull() ? QPixmap()
 		                             : m_source.scaled(size(), Qt::KeepAspectRatioByExpanding,
-		                                               Qt::FastTransformation);
+		                                               Qt::SmoothTransformation);
 	}
 
 	QString m_path;
@@ -105,15 +105,29 @@ public:
 	void paint(QPainter* painter, const QStyleOptionViewItem& option,
 	           const QModelIndex& index) const override {
 		// The stylesheet made the view's own palette transparent, so take the panel from the app's.
-		auto panel      = QGuiApplication::palette().color(QPalette::Window);
-		auto text_color = option.palette.color(QPalette::Text);
-		panel.setAlpha(210);
+		const auto app_palette = QGuiApplication::palette();
+		auto       panel       = app_palette.color(QPalette::Base);
+		auto       text_color  = option.palette.color(QPalette::Text);
+		const bool selected    = option.state.testFlag(QStyle::State_Selected);
+		const bool hovered     = option.state.testFlag(QStyle::State_MouseOver);
+		if (hovered && !selected) {
+			panel = panel.lighter(115);
+		}
+		panel.setAlpha(selected ? 235 : 215);
+		// The card border should be visible against both light and dark panels.
+		const bool panel_dark = panel.lightness() < 128;
+		const QColor idle_border  = panel_dark ? QColor(255, 255, 255, hovered ? 42 : 22)
+		                                       : QColor(0, 0, 0, hovered ? 46 : 26);
 		painter->save();
 		painter->setRenderHint(QPainter::Antialiasing);
-		painter->setPen(option.state.testFlag(QStyle::State_Selected) ? QPen(text_color)
-		                                                              : Qt::NoPen);
+		if (selected) {
+			painter->setPen(QPen(app_palette.color(QPalette::Highlight), 2));
+		} else {
+			// Subtle border so cards are defined even when idle.
+			painter->setPen(QPen(idle_border, 1));
+		}
 		painter->setBrush(panel);
-		painter->drawRoundedRect(QRectF(option.rect).adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
+		painter->drawRoundedRect(QRectF(option.rect).adjusted(1, 1, -1, -1), 6, 6);
 
 		const QRect cover(option.rect.topLeft() + QPoint(CARD_PADDING, CARD_PADDING),
 		                  option.decorationSize);

@@ -289,11 +289,11 @@ From the repository root, follow the launcher configure, build and install steps
 [Building on Linux](#building-on-linux), omitting `-DCMAKE_PREFIX_PATH="$Qt6_DIR"`; CMake finds
 Fedora's packaged Qt 6 automatically.
 
-Run `./_Build/linux/install/kyty_launcher` on regular Fedora or inside the container. To launch a
+Run `./_Build/linux/install/EmuStation5` on regular Fedora or inside the container. To launch a
 container build from the host, leave the container with `exit`, then run from the repository root:
 
 ```bash
-distrobox enter kyty-build -- ./_Build/linux/install/kyty_launcher
+distrobox enter kyty-build -- ./_Build/linux/install/EmuStation5
 ```
 
 Qt libraries and plugins are bundled. You can also launch directly on a Fedora Atomic host
@@ -327,19 +327,19 @@ cmake --install _Build/macos --prefix _Build/macos/install
 
 The build re-signs `kyty_emulator` with the JIT entitlements it needs to execute translated
 guest code; no manual signing step is required. When the launcher is built, the installation
-also produces `_Build/macos/install/KytyPS5.app` — double-click to launch the GUI.
+also produces `_Build/macos/install/EmuStation5.app` — double-click to launch the GUI.
 A flat `kyty_emulator` is kept for CLI usage.
 
 Vulkan comes from MoltenVK. Download `MoltenVK-macos.tar` from the
 [MoltenVK releases](https://github.com/KhronosGroup/MoltenVK/releases), then copy
 `MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib` next to the flat `kyty_emulator`
-(and, for the bundle, into `KytyPS5.app/Contents/Frameworks/`) and sign it with an ad hoc signature:
+(and, for the bundle, into `EmuStation5.app/Contents/Frameworks/`) and sign it with an ad hoc signature:
 
 ```bash
 codesign --force --sign - _Build/macos/install/libMoltenVK.dylib
 # For the bundle (if present):
-codesign --force --sign - _Build/macos/install/KytyPS5.app/Contents/Frameworks/libMoltenVK.dylib
-codesign --force --sign - _Build/macos/install/KytyPS5.app
+codesign --force --sign - _Build/macos/install/EmuStation5.app/Contents/Frameworks/libMoltenVK.dylib
+codesign --force --sign - _Build/macos/install/EmuStation5.app
 ```
 
 Release archives already include a signed `libMoltenVK.dylib` (both flat and inside the bundle).
@@ -359,7 +359,7 @@ Use `_Build/linux` instead of `_Build/windows` for a Linux build.
 
 A ready-made Visual Studio Code setup is included in [`.vscode`](.vscode). It configures CMake
 Tools to build the project with Ninja and `clang-cl` and provides launch profiles for both
-`kyty_launcher.exe` and `kyty_emulator.exe`. It is Windows-only: VS Code settings cannot select a
+`EmuStation5.exe` and `kyty_emulator.exe`. It is Windows-only: VS Code settings cannot select a
 compiler per platform, so on Linux configure from the command line as shown above.
 
 Before using it:
@@ -379,15 +379,15 @@ Update your graphics driver before reporting rendering problems.
 To use the graphical launcher:
 
 ```powershell
-.\_Build\windows\install\kyty_launcher.exe
+.\_Build\windows\install\EmuStation5.exe
 ```
 
 ```bash
-./_Build/linux/install/kyty_launcher
+./_Build/linux/install/EmuStation5
 ```
 
 ```bash
-open _Build/macos/install/KytyPS5.app  # or double-click in Finder
+open _Build/macos/install/EmuStation5.app  # or double-click in Finder
 ```
 
 On first launch, add one or more game folders in the global settings. The launcher searches those

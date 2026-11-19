@@ -6,28 +6,54 @@
 #include "configurationListWidget.h"
 #include "controllerPreview.h"
 #include "gameContent.h"
+#include "launcherTheme.h"
 #include "titleSound.h"
 #include "updateChecker.h"
 
+#include <algorithm>
+#include <QAction>
 #include <QApplication>
 #include <QByteArray>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QAbstractButton>
+#include <QDesktopServices>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFormLayout>
+#include <QGuiApplication>
+#include <QFontMetrics>
+#include <QHBoxLayout>
+#include <QIcon>
+#include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QObject>
 #include <QPointer>
 #include <QProcess>
+#include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
+#include <QResizeEvent>
+#include <QSaveFile>
+#include <QScreen>
+#include <QSlider>
 #include <QSettings>
+#include <QShowEvent>
+#include <QStatusBar>
 #include <QStringList>
 #include <QStyleHints>
+#include <QToolButton>
+#include <QTreeWidget>
+#include <QUrl>
 #include <QVariant>
+#include <QVBoxLayout>
 #include <QtCore>
 
 #include <cstdint>
@@ -56,6 +82,7 @@ constexpr char SETTINGS_MAIN_DIALOG[]        = "MainDialog";
 constexpr char SETTINGS_MAIN_LAST_GEOMETRY[] = "geometry";
 constexpr char SETTINGS_CHECK_UPDATES[]      = "check_updates_on_startup";
 constexpr char SETTINGS_CLOSE_TERMINAL[]     = "close_terminal";
+constexpr char SETTINGS_DETACHED_CONSOLE[]   = "detached_console";
 constexpr char SETTINGS_THEME[]              = "theme";
 
 class MainDialogPrivate: public QObject {
@@ -72,6 +99,7 @@ public:
 	void Update();
 	void FindInterpreter();
 	void Run();
+	void UpdateStatusPaths();
 
 	[[nodiscard]] const QString& GetInterpreter() const { return m_interpreter; }
 
@@ -79,27 +107,28 @@ public:
 	static void ReadSettings(QSettings& s);
 
 private:
+	void SetupMenus();
+	void SetupStatusBar();
+	void ShowSettingsDialog();
+	void RefreshGameCount();
+
 	static QByteArray g_last_geometry;
 	static bool       g_check_updates_on_startup;
 	static bool       g_close_terminal;
+	static bool       g_detached_console;
 	static int        g_theme;
 
-	static void ApplyTheme(int theme) {
-		auto scheme = Qt::ColorScheme::Unknown;
-		switch (theme) {
-			case 1: scheme = Qt::ColorScheme::Dark; break;
-			case 2: scheme = Qt::ColorScheme::Light; break;
-			default: break;
-		}
-		QApplication::styleHints()->setColorScheme(scheme);
-	}
-
-	Ui::MainDialog* m_ui             = {nullptr};
-	MainDialog*     m_main_dialog    = nullptr;
-	UpdateChecker*  m_update_checker = nullptr;
+	Ui::MainDialog*   m_ui          = {nullptr};
+	MainDialog*       m_main_dialog = nullptr;
+	UpdateChecker*    m_update_checker = nullptr;
+	QLabel*           m_status_games = nullptr;
+	QLabel*           m_status_emulator = nullptr;
+	QLabel*           m_status_settings = nullptr;
+	QString           m_status_settings_path;
+	QString           m_status_emulator_path;
 	ControllerPreview m_controller_preview;
-	TitleSound      m_title_sound;
-	QString         m_interpreter;
+	TitleSound        m_title_sound;
+	QString           m_interpreter;
 
 	int m_running_games = 0;
 };
@@ -107,9 +136,14 @@ private:
 QByteArray MainDialogPrivate::g_last_geometry;
 bool       MainDialogPrivate::g_check_updates_on_startup = true;
 bool       MainDialogPrivate::g_close_terminal           = false;
-int        MainDialogPrivate::g_theme                    = 0;
+#if defined(_WIN32)
+bool MainDialogPrivate::g_detached_console = true;
+#else
+bool MainDialogPrivate::g_detached_console = false;
+#endif
+int MainDialogPrivate::g_theme = 1;
 
-MainDialog::MainDialog(QWidget* parent): QDialog(parent), m_p(new MainDialogPrivate(this)) {
+MainDialog::MainDialog(QWidget* parent): QMainWindow(parent), m_p(new MainDialogPrivate(this)) {
 	m_p->Setup(this);
 }
 
@@ -117,25 +151,106 @@ MainDialogPrivate::~MainDialogPrivate() {
 	delete m_ui;
 }
 
+void MainDialogPrivate::UpdateStatusPaths() {
+	auto* bar = m_main_dialog->statusBar();
+	// Layouts are not activated (and the bar has no meaningful width yet) before the
+	// window is shown — fall back to a sane static budget for that first pass.
+	const int width    = bar != nullptr && bar->width() >= 200 ? bar->width() : 0;
+	const int reserved = (m_status_games != nullptr ? m_status_games->sizeHint().width() + 48 : 48);
+	const int budget   = width > 0 ? std::max(120, (width - reserved) / 2) : 420;
+
+	const QFontMetrics metrics(m_status_settings->font());
+	const auto elide   = [&metrics, &budget](QLabel* label, const QString& prefix, const QString& path) {
+		const int elide_width = std::max(80, budget - metrics.horizontalAdvance(prefix));
+		label->setText(prefix + metrics.elidedText(path, Qt::ElideMiddle, elide_width));
+		label->setToolTip(path);
+	};
+
+	if (!m_status_settings_path.isEmpty()) {
+		elide(m_status_settings, tr("Settings: "), m_status_settings_path);
+	}
+	if (!m_status_emulator_path.isEmpty()) {
+		elide(m_status_emulator, tr("Emulator: "), m_status_emulator_path);
+	}
+}
+
+// Clamp a restored frame to the currently connected screens. QWidget::restoreGeometry()
+// faithfully re-applies whatever coordinates were saved — if a monitor was unplugged, the
+// DPI changed, or the previous session saved an off-screen sentinel (e.g. -32000), the
+// launcher comes up invisible. The restore path also does not enforce the widget's
+// minimum size, so a degenerate persisted frame (0×0, or smaller than minimumSize) is
+// repaired here even when it technically fits on a screen. Returns true if the frame
+// had to be moved or resized.
+static bool ClampWindowToVisibleScreens(QWidget* window) {
+	const QRect frame    = window->frameGeometry();
+	const QSize min_size = window->minimumSize();
+	const bool  size_ok  = frame.width() >= min_size.width() &&
+	                       frame.height() >= min_size.height();
+
+	if (size_ok) {
+		const auto screens = QGuiApplication::screens();
+		for (const QScreen* screen: screens) {
+			if (screen->availableGeometry().intersects(frame)) {
+				return false;
+			}
+		}
+	}
+	if (!size_ok) {
+		// On-screen but smaller than the minimum: grow in place and nudge the
+		// origin back inside the screen if the enlargement overflows.
+		const auto* screen = QGuiApplication::screenAt(frame.center());
+		if (screen != nullptr) {
+			const QRect avail_screen = screen->availableGeometry();
+			const QSize size = window->size().expandedTo(min_size).boundedTo(
+			    avail_screen.size());
+			QPoint pos = frame.topLeft();
+			if (pos.x() + size.width() - 1 > avail_screen.right() ||
+			    pos.y() + size.height() - 1 > avail_screen.bottom()) {
+				pos = QPoint(avail_screen.right() - size.width() + 1,
+				             avail_screen.bottom() - size.height() + 1);
+			}
+			pos.setX(std::max(pos.x(), avail_screen.left()));
+			pos.setY(std::max(pos.y(), avail_screen.top()));
+			window->resize(size);
+			window->move(pos);
+			return true;
+		}
+	}
+
+	const QScreen* primary = QGuiApplication::primaryScreen();
+	if (primary == nullptr) {
+		return false;
+	}
+
+	const QRect avail = primary->availableGeometry();
+	QSize       size  = window->size().boundedTo(avail.size());
+	size              = size.expandedTo(window->minimumSize());
+	if (size.width() > avail.width() || size.height() > avail.height()) {
+		size = avail.size();
+	}
+
+	window->resize(size);
+	window->move(avail.topLeft()
+	             + QPoint((avail.width() - size.width()) / 2, (avail.height() - size.height()) / 2));
+	return true;
+}
+
 void MainDialogPrivate::Setup(MainDialog* main_dialog) {
 	m_ui = new Ui::MainDialog;
 	m_ui->setupUi(main_dialog);
+	m_ui->brand_mark->setPixmap(QIcon(QStringLiteral(":/icons/emustation5.png")).pixmap(QSize(38, 38)));
 	m_ui->widget->SetControllerPreview(&m_controller_preview);
 
-	m_main_dialog = main_dialog;
+	m_main_dialog    = main_dialog;
 	m_update_checker = new UpdateChecker(main_dialog);
-	m_ui->check_updates_on_startup->setChecked(g_check_updates_on_startup);
-	m_ui->close_terminal->setChecked(g_close_terminal);
-	m_ui->theme_combo->setCurrentIndex(g_theme);
-	ApplyTheme(g_theme);
 	m_ui->check_updates_link->setVisible(UpdateChecker::IsSupported());
-	m_ui->check_updates_on_startup->setVisible(UpdateChecker::IsSupported());
 #if defined(__APPLE__)
-	m_ui->close_terminal->setVisible(false); // The emulator runs without a terminal.
+	m_ui->check_updates_link->setVisible(false);
 #endif
 
-	main_dialog->setWindowFlags(Qt::Dialog | Qt::WindowMinMaxButtonsHint |
-	                            Qt::WindowCloseButtonHint);
+	SetupMenus();
+	SetupStatusBar();
+	LauncherTheme::Apply(g_theme);
 
 	connect(main_dialog, &MainDialog::Start, this, &MainDialogPrivate::FindInterpreter,
 	        Qt::QueuedConnection);
@@ -157,29 +272,293 @@ void MainDialogPrivate::Setup(MainDialog* main_dialog) {
 	connect(m_update_checker, &UpdateChecker::CheckingChanged, m_ui->check_updates_link,
 	        &QLabel::setDisabled);
 	connect(m_update_checker, &UpdateChecker::InstallingChanged, this, &MainDialogPrivate::Update);
-	connect(m_ui->check_updates_on_startup, &QCheckBox::toggled, this, [this](bool checked) {
-		g_check_updates_on_startup = checked;
-		m_ui->widget->WriteSettings();
-	});
-	connect(m_ui->close_terminal, &QCheckBox::toggled, this, [this](bool checked) {
-		g_close_terminal = checked;
-		m_ui->widget->WriteSettings();
-	});
-	connect(m_ui->theme_combo, &QComboBox::currentIndexChanged, this, [this](int index) {
-		g_theme = index;
-		ApplyTheme(index);
-		m_ui->widget->WriteSettings();
-	});
 	connect(main_dialog, &MainDialog::Resize, [this]() {
-		g_last_geometry = m_main_dialog->saveGeometry();
+		// Never persist a degenerate frame (0×0 or smaller than the minimum):
+		// restoreGeometry() would apply it verbatim and the launcher would
+		// come up invisible on the next run.
+		const QSize current = m_main_dialog->size();
+		const QSize minimum = m_main_dialog->minimumSize();
+		if (current.width() >= minimum.width() && current.height() >= minimum.height()) {
+			g_last_geometry = m_main_dialog->saveGeometry();
+		}
 		m_ui->widget->WriteSettings();
+		UpdateStatusPaths();
 	});
 
-	m_ui->label_settings_file->setText(tr("Settings file: ") + m_ui->widget->GetSettingsFile());
+	m_status_settings_path = m_ui->widget->GetSettingsFile();
+	UpdateStatusPaths();
 
+	// Keep the launcher reachable even if the saved position is off-screen (stale
+	// monitor configuration or an off-screen sentinel persisted in the settings).
 	m_main_dialog->restoreGeometry(g_last_geometry);
+	if (ClampWindowToVisibleScreens(m_main_dialog)) {
+		g_last_geometry = m_main_dialog->saveGeometry();
+		// Persist the recovered geometry so the settings file self-heals instead of
+		// handing the dead position to the next launch.
+		m_ui->widget->WriteSettings();
+	}
 
 	Update();
+	RefreshGameCount();
+}
+
+void MainDialogPrivate::SetupMenus() {
+	auto* menubar = m_main_dialog->menuBar();
+	menubar->setNativeMenuBar(false);
+
+	const auto invoke = [this](const char* slot) {
+		QMetaObject::invokeMethod(m_ui->widget, slot, Qt::DirectConnection);
+	};
+
+	auto* file = m_ui->menu_File;
+	auto* add_game_folder = file->addAction(tr("Add Game Folder..."));
+	connect(add_game_folder, &QAction::triggered, this,
+	        [invoke]() { invoke("edit_global_settings"); });
+
+	auto* refresh = file->addAction(tr("Refresh Game List"));
+	refresh->setShortcut(QKeySequence::Refresh);
+	connect(refresh, &QAction::triggered, m_ui->widget,
+	        &ConfigurationListWidget::ScanGameDirectory);
+
+	file->addSeparator();
+	auto* quit = file->addAction(tr("Exit"));
+	quit->setShortcut(QKeySequence::Quit);
+	connect(quit, &QAction::triggered, m_main_dialog, &QWidget::close);
+
+	auto* emulation = m_ui->menu_Emulation;
+	auto* start = emulation->addAction(tr("Start"));
+	start->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
+	connect(start, &QAction::triggered, m_ui->widget, &ConfigurationListWidget::Run);
+
+	auto* configure_global = emulation->addAction(tr("Configure..."));
+	connect(configure_global, &QAction::triggered, this,
+	        [invoke]() { invoke("edit_global_settings"); });
+
+	auto* input_mapping = emulation->addAction(tr("Input Mapping..."));
+	connect(input_mapping, &QAction::triggered, this,
+	        [invoke]() { invoke("edit_input_mapping"); });
+
+	auto* configure_game = emulation->addAction(tr("Configure Game..."));
+	connect(configure_game, &QAction::triggered, this,
+	        [invoke]() { invoke("edit_configuration"); });
+
+	emulation->addSeparator();
+	auto* view_trophies = emulation->addAction(tr("View Trophies"));
+	connect(view_trophies, &QAction::triggered, m_ui->widget,
+	        &ConfigurationListWidget::ViewTrophies);
+
+	auto* trophy_overview = emulation->addAction(tr("Trophy Overview"));
+	connect(trophy_overview, &QAction::triggered, m_ui->widget,
+	        &ConfigurationListWidget::ViewTrophyOverview);
+
+	auto* view = m_ui->menu_View;
+	auto* focus_search = view->addAction(tr("Focus Search"));
+	focus_search->setShortcut(QKeySequence::Find);
+	connect(focus_search, &QAction::triggered, this, [this]() {
+		if (auto* search = m_ui->widget->findChild<QLineEdit*>(QStringLiteral("search_line_edit"))) {
+			search->setFocus();
+			search->selectAll();
+		}
+	});
+
+	auto* grid_action = view->addAction(tr("Grid View"));
+	grid_action->setCheckable(true);
+	grid_action->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_G));
+	if (auto* grid_button =
+	        m_ui->widget->findChild<QToolButton*>(QStringLiteral("grid_view_button"))) {
+		grid_action->setChecked(grid_button->isChecked());
+		connect(grid_action, &QAction::toggled, grid_button, &QToolButton::setChecked);
+		connect(grid_button, &QToolButton::toggled, grid_action, &QAction::setChecked);
+	}
+
+	// Grid icon size, mirroring the toolbar slider (singleStep = 16 px).
+	auto* increase_icon = view->addAction(tr("Increase Grid Icon Size"));
+	increase_icon->setShortcuts(
+	    {QKeySequence(Qt::CTRL | Qt::Key_Equal), QKeySequence(Qt::CTRL | Qt::Key_Plus)});
+	auto* decrease_icon = view->addAction(tr("Decrease Grid Icon Size"));
+	decrease_icon->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Minus));
+	const auto adjust_grid_icon_size = [this](int steps) {
+		if (auto* slider =
+		        m_ui->widget->findChild<QSlider*>(QStringLiteral("grid_size_slider"))) {
+			slider->setValue(slider->value() + steps * slider->singleStep());
+		}
+	};
+	connect(increase_icon, &QAction::triggered, this, [adjust_grid_icon_size]() { adjust_grid_icon_size(1); });
+	connect(decrease_icon, &QAction::triggered, this, [adjust_grid_icon_size]() { adjust_grid_icon_size(-1); });
+
+	auto* tools = m_ui->menu_Tools;
+	auto* check_updates = tools->addAction(tr("Check for Updates..."));
+	check_updates->setVisible(UpdateChecker::IsSupported());
+	connect(check_updates, &QAction::triggered, this,
+	        [this]() { m_update_checker->Check(true); });
+
+	auto* settings_folder = tools->addAction(tr("Open Settings Folder"));
+	connect(settings_folder, &QAction::triggered, this, [this]() {
+		QDesktopServices::openUrl(
+		    QUrl::fromLocalFile(QFileInfo(m_ui->widget->GetSettingsFile()).absolutePath()));
+	});
+
+	tools->addSeparator();
+	auto* settings = tools->addAction(tr("Settings..."));
+	settings->setShortcut(QKeySequence::Preferences);
+	connect(settings, &QAction::triggered, this, &MainDialogPrivate::ShowSettingsDialog);
+
+	auto* help = m_ui->menu_Help;
+	auto* about = help->addAction(tr("About EmuStation5"));
+	connect(about, &QAction::triggered, this, [this]() {
+		QMessageBox::about(
+		    m_main_dialog, tr("About EmuStation5"),
+		    tr("<h3>EmuStation5</h3>"
+		       "<p>A PlayStation 5 emulator for Windows and Linux.</p>"
+		       "<p>%1</p>")
+		        .arg(m_ui->label_Version->text()));
+	});
+	auto* about_qt = help->addAction(tr("About Qt"));
+	connect(about_qt, &QAction::triggered, qApp, &QApplication::aboutQt);
+}
+
+void MainDialogPrivate::SetupStatusBar() {
+	auto* bar = m_main_dialog->statusBar();
+	bar->setObjectName(QStringLiteral("launcher_status_bar"));
+	bar->setSizeGripEnabled(false);
+
+	m_status_games = new QLabel(tr("No games"), bar);
+	m_status_games->setObjectName(QStringLiteral("status_games"));
+	m_status_games->setAccessibleName(tr("Game count"));
+	bar->addWidget(m_status_games);
+
+	m_status_settings = new QLabel(bar);
+	m_status_settings->setObjectName(QStringLiteral("status_settings"));
+	m_status_settings->setAccessibleName(tr("Settings file location"));
+	m_status_settings->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	bar->addPermanentWidget(m_status_settings);
+
+	m_status_emulator = new QLabel(tr("Emulator: not found"), bar);
+	m_status_emulator->setObjectName(QStringLiteral("status_emulator"));
+	m_status_emulator->setAccessibleName(tr("Emulator executable location"));
+	m_status_emulator->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	bar->addPermanentWidget(m_status_emulator);
+}
+
+void MainDialogPrivate::RefreshGameCount() {
+	if (m_status_games == nullptr) {
+		return;
+	}
+	const auto* list = m_ui->widget->findChild<QTreeWidget*>(QStringLiteral("cfgs_list"));
+	const int   count = list != nullptr ? list->topLevelItemCount() : 0;
+	m_status_games->setText(count == 1 ? tr("1 game") : tr("%1 games").arg(count));
+}
+
+void MainDialogPrivate::ShowSettingsDialog() {
+	QDialog dialog(m_main_dialog);
+	dialog.setObjectName(QStringLiteral("launcher_settings"));
+	dialog.setWindowTitle(tr("Settings"));
+	dialog.setModal(true);
+
+	auto* layout = new QVBoxLayout(&dialog);
+	layout->setContentsMargins(22, 20, 22, 18);
+	layout->setSpacing(16);
+
+	auto* heading = new QLabel(tr("Launcher Settings"), &dialog);
+	heading->setObjectName(QStringLiteral("settings_heading"));
+	heading->setAccessibleName(tr("Launcher Settings heading"));
+	dialog.setAccessibleName(tr("Settings"));
+	layout->addWidget(heading);
+
+	auto* form = new QFormLayout;
+	form->setHorizontalSpacing(18);
+	form->setVerticalSpacing(12);
+	form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+	auto* theme = new QComboBox(&dialog);
+	theme->setObjectName(QStringLiteral("theme_combo"));
+	theme->addItems({tr("System"), tr("Dark"), tr("Light")});
+	theme->setCurrentIndex(g_theme);
+	theme->setAccessibleName(tr("Theme"));
+	theme->setAccessibleDescription(
+	    tr("Choose between System, Dark and Light application themes"));
+	form->addRow(tr("Theme"), theme);
+
+	auto* updates = new QCheckBox(tr("Check for updates on startup"), &dialog);
+	updates->setObjectName(QStringLiteral("check_updates_on_startup"));
+	updates->setChecked(g_check_updates_on_startup);
+	updates->setVisible(UpdateChecker::IsSupported());
+	updates->setAccessibleName(tr("Check for updates on startup"));
+	form->addRow(QString(), updates);
+
+	auto* close_terminal =
+	    new QCheckBox(tr("Close terminal automatically when the game exits"), &dialog);
+	close_terminal->setObjectName(QStringLiteral("close_terminal"));
+	close_terminal->setChecked(g_close_terminal);
+	close_terminal->setAccessibleName(
+	    tr("Close terminal automatically when the game exits"));
+#if defined(__APPLE__)
+	close_terminal->setVisible(false);
+#endif
+	form->addRow(QString(), close_terminal);
+
+	auto* detached = new QCheckBox(tr("Run games without a terminal window"), &dialog);
+	detached->setObjectName(QStringLiteral("detached_console"));
+	detached->setChecked(g_detached_console);
+	detached->setAccessibleName(tr("Run games without a terminal window"));
+	detached->setAccessibleDescription(
+	    tr("Runs the emulator without a console window and writes its console output to "
+	       "_kyty_console.txt. Closing the launcher or a terminal does not stop the game."));
+	detached->setToolTip(detached->accessibleDescription());
+#if !defined(_WIN32)
+	detached->setVisible(false);
+#endif
+	form->addRow(QString(), detached);
+
+	// The terminal option only matters while a terminal is actually used.
+	close_terminal->setEnabled(!detached->isChecked());
+	connect(detached, &QCheckBox::toggled, close_terminal,
+	        [close_terminal](bool detached_mode) { close_terminal->setEnabled(!detached_mode); });
+
+	layout->addLayout(form);
+
+	auto* info = new QLabel(tr("Settings file: %1").arg(m_ui->widget->GetSettingsFile()), &dialog);
+	info->setObjectName(QStringLiteral("settings_file"));
+	info->setWordWrap(true);
+	info->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	info->setAccessibleName(tr("Settings file location"));
+	layout->addWidget(info);
+
+	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+	                                     Qt::Horizontal, &dialog);
+	layout->addWidget(buttons);
+	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+	// Logical tab chain for keyboard/screen-reader users: theme first, the
+	// checkboxes next, then the button bar. The read-only info label is not
+	// focusable since it renders outside the focus chain.
+	if (auto* ok = buttons->button(QDialogButtonBox::Ok)) {
+		ok->setAccessibleName(tr("OK"));
+		QWidget::setTabOrder(theme, updates);
+		QWidget::setTabOrder(updates, close_terminal);
+		QWidget::setTabOrder(close_terminal, detached);
+		QWidget::setTabOrder(detached, ok);
+		if (auto* cancel = buttons->button(QDialogButtonBox::Cancel)) {
+			QWidget::setTabOrder(ok, cancel);
+		}
+	}
+
+	const int previous_theme = g_theme;
+	connect(theme, &QComboBox::currentIndexChanged, this,
+	        [](int index) { LauncherTheme::Apply(index); });
+
+	if (dialog.exec() != QDialog::Accepted) {
+		LauncherTheme::Apply(previous_theme);
+		return;
+	}
+
+	g_theme                    = theme->currentIndex();
+	g_check_updates_on_startup = updates->isChecked();
+	g_close_terminal           = close_terminal->isChecked();
+	g_detached_console         = detached->isChecked();
+	LauncherTheme::Apply(g_theme);
+	m_ui->widget->WriteSettings();
 }
 
 void MainDialogPrivate::FindInterpreter() {
@@ -196,7 +575,8 @@ void MainDialogPrivate::FindInterpreter() {
 	m_ui->widget->SetRuntimeDirectory(QFileInfo(m_interpreter).absolutePath());
 
 	if (found) {
-		m_ui->label_Interpreter->setText(tr("Emulator: ") + m_interpreter);
+		m_status_emulator_path = m_interpreter;
+		UpdateStatusPaths();
 
 		QProcess test;
 		test.setProgram(m_interpreter);
@@ -207,8 +587,10 @@ void MainDialogPrivate::FindInterpreter() {
 		auto lines  = output.split(QRegularExpression("[\r\n]"), Qt::SkipEmptyParts);
 
 		if (lines.count() >= 2) {
-			m_ui->label_Version->setText(
-			    tr("Version: ") + (lines.at(0).startsWith("exe_name") ? lines.at(1) : lines.at(0)));
+			const auto version =
+			    lines.at(0).startsWith("exe_name") ? lines.at(1) : lines.at(0);
+			m_ui->label_Version->setText(tr("Version: ") + version);
+			m_ui->label_Version->setToolTip(version);
 		} else {
 			found = false;
 		}
@@ -225,10 +607,11 @@ void MainDialogPrivate::FindInterpreter() {
 	// nested modal shutdown / background compatibility load).
 	m_ui->widget->EnsureGameDirectory();
 
-	m_ui->label_settings_file->setText(tr("Settings file: ") + m_ui->widget->GetSettingsFile());
+	m_status_settings_path = m_ui->widget->GetSettingsFile();
+	UpdateStatusPaths();
 
 	Update();
-	if (m_ui->check_updates_on_startup->isChecked()) {
+	if (g_check_updates_on_startup) {
 		m_update_checker->Check(false);
 	}
 }
@@ -408,7 +791,8 @@ static QString CmdCommand(const QString& interpreter, const QStringList& args,
 }
 #endif
 
-void MainDialog::RunInterpreter(QProcess* process, const Configuration& info, bool close_terminal) {
+void MainDialog::RunInterpreter(QProcess* process, const Configuration& info, bool close_terminal,
+                                bool detached) {
 	const auto& interpreter = m_p->GetInterpreter();
 
 	auto args = CreateEmulatorArgs(info);
@@ -417,6 +801,39 @@ void MainDialog::RunInterpreter(QProcess* process, const Configuration& info, bo
 		QApplication::quit();
 		return;
 	}
+
+	const auto working_directory = QFileInfo(interpreter).absolutePath();
+
+#if defined(_WIN32)
+	if (detached) {
+		// Run the emulator itself, without cmd.exe and without a console window. Its console
+		// output goes to a file next to the emulator. Because no console is attached, closing a
+		// terminal cannot terminate the game, and the detached QProcess below keeps it alive
+		// when the launcher exits.
+		process->setProgram(interpreter);
+		process->setArguments(args);
+		process->setWorkingDirectory(working_directory);
+		process->setProcessChannelMode(QProcess::MergedChannels);
+		process->setStandardOutputFile(
+		    QDir(working_directory).filePath(QStringLiteral("_kyty_console.txt")),
+		    QIODevice::Truncate);
+		process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+			args->flags |= static_cast<uint32_t>(CREATE_NO_WINDOW);
+		});
+		process->start();
+		if (!process->waitForStarted(5000)) {
+			QMessageBox::critical(this, tr("Error"),
+			                      tr("Failed to start:\n%1\n\n%2").arg(process->program(),
+			                                                          process->errorString()));
+			return;
+		}
+		// QProcess kills its child in its destructor, so drop the parent link: the game must
+		// outlive the launcher. The process object is freed by the stateChanged handler once
+		// the game exits, or by the OS if the launcher quits first.
+		process->setParent(nullptr);
+		return;
+	}
+#endif
 
 	// Without a terminal, the emulator runs directly.
 	process->setProgram(interpreter);
@@ -435,7 +852,7 @@ void MainDialog::RunInterpreter(QProcess* process, const Configuration& info, bo
 	process->setNativeArguments(
 	    CmdCommand(QDir::toNativeSeparators(interpreter), args, close_terminal));
 #endif
-	process->setWorkingDirectory(QFileInfo(interpreter).absolutePath());
+	process->setWorkingDirectory(working_directory);
 #if defined(_WIN32)
 	process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
 		args->flags |= static_cast<uint32_t>(CREATE_NEW_CONSOLE);
@@ -472,7 +889,18 @@ void MainDialog::ReadSettings(QSettings& s) {
 
 void MainDialog::resizeEvent(QResizeEvent* event) {
 	emit Resize();
-	QDialog::resizeEvent(event);
+	QMainWindow::resizeEvent(event);
+}
+
+void MainDialog::showEvent(QShowEvent* event) {
+	QMainWindow::showEvent(event);
+	// The environment can park a just-created window off-screen (observed as -32000
+	// at 200% DPI), which would leave the launcher invisible until manually restored.
+	if (ClampWindowToVisibleScreens(this)) {
+		emit Resize();
+	}
+	// The bar has its real width only once it is shown — re-elide the paths to fit.
+	m_p->UpdateStatusPaths();
 }
 
 void MainDialogPrivate::WriteSettings(QSettings& s) {
@@ -483,6 +911,7 @@ void MainDialogPrivate::WriteSettings(QSettings& s) {
 	}
 	s.setValue(SETTINGS_CHECK_UPDATES, g_check_updates_on_startup);
 	s.setValue(SETTINGS_CLOSE_TERMINAL, g_close_terminal);
+	s.setValue(SETTINGS_DETACHED_CONSOLE, g_detached_console);
 	s.setValue(SETTINGS_THEME, g_theme);
 
 	s.endGroup();
@@ -494,16 +923,22 @@ void MainDialogPrivate::ReadSettings(QSettings& s) {
 	g_last_geometry = s.value(SETTINGS_MAIN_LAST_GEOMETRY, g_last_geometry).toByteArray();
 	g_check_updates_on_startup = s.value(SETTINGS_CHECK_UPDATES, true).toBool();
 	g_close_terminal           = s.value(SETTINGS_CLOSE_TERMINAL, false).toBool();
-	g_theme                    = s.value(SETTINGS_THEME, 0).toInt();
+#if defined(_WIN32)
+	g_detached_console = s.value(SETTINGS_DETACHED_CONSOLE, true).toBool();
+#else
+	// The detached console mode is Windows-only.
+	g_detached_console = false;
+#endif
+	g_theme = s.value(SETTINGS_THEME, 1).toInt();
 	if (g_theme < 0 || g_theme > 2) {
-		g_theme = 0;
+		g_theme = 1;
 	}
 
 	s.endGroup();
 }
 
 void MainDialogPrivate::Run() {
-	if (m_update_checker->IsInstalling()) {
+	if (m_update_checker->IsInstalling() || !m_ui->widget->IsRunEnabled()) {
 		return;
 	}
 	QPointer<ConfigurationItem> item = m_ui->widget->GetSelectedItem();
@@ -529,12 +964,13 @@ void MainDialogPrivate::Run() {
 		        }
 	        });
 	auto info = m_ui->widget->CreateConfiguration(*item);
-	m_main_dialog->RunInterpreter(process, *info, g_close_terminal);
+	m_main_dialog->RunInterpreter(process, *info, g_close_terminal, g_detached_console);
 
 	Update();
 }
 
 void MainDialogPrivate::Update() {
+	RefreshGameCount();
 	const auto* item = m_ui->widget->GetSelectedItem();
 
 	bool run_enabled = item != nullptr && !item->IsRunning() && !m_update_checker->IsInstalling();

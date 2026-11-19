@@ -26,6 +26,7 @@ AdditionalContentDialog::AdditionalContentDialog(const Configuration& game, cons
       m_entries(std::move(entries)), m_save(std::move(save)) {
 	setAttribute(Qt::WA_DeleteOnClose);
 	setWindowTitle(tr("Additional Content - %1").arg(game.name));
+	setAccessibleName(tr("Additional content for %1").arg(game.name));
 	resize(720, 480);
 
 	QPixmap icon;
@@ -43,15 +44,24 @@ AdditionalContentDialog::AdditionalContentDialog(const Configuration& game, cons
 	m_list->setIconSize(QSize(64, 64));
 	m_list->setSpacing(4);
 	m_list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+	m_list->setAccessibleName(tr("Installed additional content"));
 	layout->addWidget(m_list, 1);
 
 	auto* add_layout = new QHBoxLayout;
 	m_label_edit     = new QLineEdit(this);
 	m_label_edit->setPlaceholderText(tr("Label or content ID"));
+	m_label_edit->setAccessibleName(tr("Label or content ID"));
+	m_label_edit->setAccessibleDescription(
+	    tr("Content name or ID shown for the add-on. Empty keeps the default label"));
 	m_dir_edit = new QLineEdit(this);
 	m_dir_edit->setPlaceholderText(tr("Add-on data folder (empty for a license only)"));
+	m_dir_edit->setAccessibleName(tr("Add-on data folder"));
+	m_dir_edit->setAccessibleDescription(
+	    tr("Folder with the add-on's data files. Leave empty for a license without data"));
 	auto* browse = new QPushButton(tr("Browse..."), this);
+	browse->setAccessibleDescription(tr("Choose the add-on's data folder"));
 	auto* add    = new QPushButton(tr("Add"), this);
+	add->setAccessibleDescription(tr("Register the content with the game"));
 	add->setDefault(true);
 	add_layout->addWidget(m_label_edit, 1);
 	add_layout->addWidget(m_dir_edit, 2);
@@ -74,8 +84,11 @@ AdditionalContentDialog::AdditionalContentDialog(const Configuration& game, cons
 
 	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
 	auto* refresh = buttons->addButton(tr("Refresh"), QDialogButtonBox::ActionRole);
+	refresh->setAccessibleDescription(tr("Rescan the add-on folder"));
 	m_open        = buttons->addButton(tr("Open folder"), QDialogButtonBox::ActionRole);
+	m_open->setAccessibleDescription(tr("Open the add-on folder in the file manager"));
 	m_remove      = buttons->addButton(tr("Remove"), QDialogButtonBox::ActionRole);
+	m_remove->setAccessibleDescription(tr("Remove the selected add-on from the game"));
 	layout->addWidget(buttons);
 	connect(refresh, &QPushButton::clicked, this, &AdditionalContentDialog::Scan);
 	connect(m_open, &QPushButton::clicked, this,
@@ -85,6 +98,18 @@ AdditionalContentDialog::AdditionalContentDialog(const Configuration& game, cons
 		m_remove->setEnabled(item != nullptr && item->data(Qt::UserRole).isValid());
 	});
 	connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::close);
+
+	if (auto* close = buttons->button(QDialogButtonBox::Close)) {
+		close->setAccessibleName(tr("Close"));
+		setTabOrder(m_list, m_label_edit);
+		setTabOrder(m_label_edit, m_dir_edit);
+		setTabOrder(m_dir_edit, browse);
+		setTabOrder(browse, add);
+		setTabOrder(add, refresh);
+		setTabOrder(refresh, m_open);
+		setTabOrder(m_open, m_remove);
+		setTabOrder(m_remove, close);
+	}
 
 	Scan();
 }

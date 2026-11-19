@@ -1292,6 +1292,22 @@ int KYTY_SYSV_ABI KernelTruncate(const char* path, int64_t length) {
 		}
 	}
 	if (error) {
+		if (error == std::errc::no_such_file_or_directory) {
+			auto parent = real_name.parent_path();
+			while (!parent.empty()) {
+				std::error_code parent_error;
+				const auto      parent_status = std::filesystem::status(parent, parent_error);
+				if (!parent_error && std::filesystem::exists(parent_status) &&
+				    !std::filesystem::is_directory(parent_status)) {
+					return KERNEL_ERROR_ENOTDIR;
+				}
+				const auto next_parent = parent.parent_path();
+				if (next_parent == parent) {
+					break;
+				}
+				parent = next_parent;
+			}
+		}
 		switch (static_cast<std::errc>(error.default_error_condition().value())) {
 			case std::errc::no_such_file_or_directory: return KERNEL_ERROR_ENOENT;
 			case std::errc::not_a_directory: return KERNEL_ERROR_ENOTDIR;

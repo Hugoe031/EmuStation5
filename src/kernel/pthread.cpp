@@ -389,6 +389,9 @@ struct PthreadPrivate {
 	std::atomic_bool      detached;
 	std::atomic_bool      almost_done;
 	std::atomic_bool      free;
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+	std::atomic_bool      cancel_requested {false};
+#endif
 	uint64_t              host_thread_id;
 	uintptr_t             guest_host_rbx;
 	uintptr_t             guest_host_rsp;
@@ -804,13 +807,20 @@ bool TestGuestStackOwnerLifecycle(uint64_t* first_address, uint64_t* second_addr
 }
 #endif
 
-static KYTY_SYSV_ABI void* RunOnGuestStack(void* arg, pthread_entry_func_t func, void* stack_top) {
+static KYTY_SYSV_ABI void* RunOnGuestStack(void* arg, pthread_entry_func_t func, void* stack_top,
+                                          void* stack_bottom) {
 #if defined(__x86_64__) || defined(_M_X64)
 	void*      ret = nullptr;
 	const auto aligned_stack_top =
 	    reinterpret_cast<uintptr_t>(stack_top) & ~static_cast<uintptr_t>(0x0f);
 	const auto guest_rsp = aligned_stack_top - 2u * sizeof(uintptr_t);
 	const auto guest_rbp = guest_rsp;
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+	uintptr_t guest_stack_base  = aligned_stack_top;
+	uintptr_t guest_stack_limit = reinterpret_cast<uintptr_t>(stack_bottom);
+#else
+	(void)stack_bottom;
+#endif
 
 	auto* guest_root_frame = reinterpret_cast<uintptr_t*>(guest_rbp);
 	guest_root_frame[0]    = 0;
@@ -879,9 +889,8 @@ static KYTY_SYSV_ABI void* RunOnGuestStack(void* arg, pthread_entry_func_t func,
 #if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
 	             "movq %%gs:0x08, %%r14\n\t"
 	             "movq %%gs:0x10, %%r15\n\t"
-	             "xorq %%rcx, %%rcx\n\t"
 	             "movq %%rcx, %%gs:0x08\n\t"
-	             "movq %%rcx, %%gs:0x10\n\t"
+	             "movq %%rdx, %%gs:0x10\n\t"
 #endif
 	             "movq %%rsp, %%r12\n\t"
 	             "movq %%rbp, %%r13\n\t"
@@ -899,11 +908,16 @@ static KYTY_SYSV_ABI void* RunOnGuestStack(void* arg, pthread_entry_func_t func,
 	             "popq %%r13\n\t"
 	             "popq %%r12\n\t"
 	             : "=a"(ret), "+D"(arg), "+S"(func)
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+	               ,
+	               [guest_stack_base] "+&c"(guest_stack_base),
+	               [guest_stack_limit] "+&d"(guest_stack_limit)
+#endif
 	             : [guest_rsp] "r"(guest_rsp), [guest_rbp] "r"(guest_rbp)
 #if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	             : "cc", "memory", "rcx", "rdx", "r8", "r9", "r10", "r11", "xmm0", "xmm1", "xmm2",
-	               "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11",
-	               "xmm12", "xmm13", "xmm14", "xmm15");
+	             : "cc", "memory", "r8", "r9", "r10", "r11", "xmm0", "xmm1", "xmm2", "xmm3",
+	               "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12",
+	               "xmm13", "xmm14", "xmm15");
 #else
 	             : "cc", "memory", "rcx", "rdx", "r8", "r9", "r10", "r11", "r12", "r13", "xmm0",
 	               "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10",
@@ -3234,7 +3248,7 @@ static void* RunThread(void* arg) {
 	auto* stack_top = reinterpret_cast<void*>(
 	    (reinterpret_cast<uintptr_t>(thread->attr->stack_addr) + thread->attr->stack_size) &
 	    ~static_cast<uintptr_t>(0x0f));
-	ret = RunOnGuestStack(thread->arg, thread->entry, stack_top);
+	ret = RunOnGuestStack(thread->arg, thread->entry, stack_top, thread->attr->stack_addr);
 
 	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-cstyle-cast)
 	pthread_cleanup_pop(1);
@@ -3379,14 +3393,25 @@ int KYTY_SYSV_ABI PthreadCancel(Pthread thread) {
 		return KERNEL_ERROR_ESRCH;
 	}
 
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+	thread->cancel_requested = true;
+#endif
 	int result = pthread_cancel(thread->p);
 
 	LOGF("\tthread cancel: %s, %d\n", thread->name.c_str(), result);
 
 	switch (result) {
 		case 0: return OK;
-		case ESRCH: return KERNEL_ERROR_ESRCH;
-		default: return KERNEL_ERROR_EINVAL;
+		case ESRCH:
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+			thread->cancel_requested = false;
+#endif
+			return KERNEL_ERROR_ESRCH;
+		default:
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+			thread->cancel_requested = false;
+#endif
+			return KERNEL_ERROR_EINVAL;
 	}
 }
 
@@ -3534,6 +3559,12 @@ int KYTY_SYSV_ABI PthreadSetprio(Pthread thread, int prio) {
 void KYTY_SYSV_ABI PthreadTestcancel() {
 	PRINT_NAME();
 
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+	// Winpthread's forced unwind cannot cross the guest stack switch.
+	if (g_pthread_self != nullptr && g_pthread_self->cancel_requested.exchange(false)) {
+		PthreadExit(reinterpret_cast<void*>(-1));
+	}
+#endif
 	pthread_testcancel();
 }
 

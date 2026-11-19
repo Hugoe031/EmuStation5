@@ -7,8 +7,8 @@
 int main(int argc, char* argv[]) {
 	QApplication a(argc, argv);
 	// Title bars and taskbars get the bolder small-size artwork.
-	const QIcon small_art(QStringLiteral(":/icons/kyty-small.svg"));
-	const QIcon large_art(QStringLiteral(":/icons/kyty.svg"));
+	const QIcon small_art(QStringLiteral(":/icons/emustation5-small.png"));
+	const QIcon large_art(QStringLiteral(":/icons/emustation5.png"));
 	QIcon       icon;
 	for (int size: {16, 24, 32, 48, 64}) {
 		icon.addPixmap(small_art.pixmap(QSize(size, size), 1.0));

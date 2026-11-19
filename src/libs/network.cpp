@@ -49,6 +49,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1100,16 +1101,15 @@ static int ConvertSocketOptionName(int level, int option) {
 			case 0x1002: return SO_RCVBUF;
 			case 0x1007: return SO_ERROR;
 			case 0x1105: return SO_SNDTIMEO;
+#if defined(_WIN32)
+			case 0x1006: return SO_RCVTIMEO;
+#endif
 			default: break;
 		}
 	} else if (level == 6 && option == 1) {
 		return TCP_NODELAY;
 	}
-#if defined(_WIN32)
-	return option;
-#else
 	return -1;
-#endif
 }
 
 static int* P2pSocketOption(P2pEndpoint& endpoint, int option) {
@@ -3339,6 +3339,15 @@ int KYTY_SYSV_ABI HttpWaitRequest(HttpEpollHandle eh, HttpNBEvent* nbev, int max
 
 	if (eh == nullptr || maxevents < 0 || (maxevents > 0 && nbev == nullptr)) {
 		return HTTP_ERROR_INVALID_VALUE;
+	}
+
+	// This backend never reports completion events, so there is nothing to return. Block for the
+	// requested timeout (microseconds) instead of returning immediately: guests poll this call in
+	// a loop (bdHTTPWorker), and an instant return turns that loop into a busy spin that burns a
+	// core and floods the log when printf goes to the console. The cap keeps shutdown responsive.
+	constexpr int MAX_WAIT_US = 1000 * 1000;
+	if (timeout > 0) {
+		std::this_thread::sleep_for(std::chrono::microseconds(std::min(timeout, MAX_WAIT_US)));
 	}
 
 	return 0;

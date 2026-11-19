@@ -17,6 +17,7 @@
 #include <QAbstractItemModel>
 #include <QAbstractItemView>
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -24,6 +25,7 @@
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -37,6 +39,7 @@
 #include <QKeySequence>
 #include <QLineEdit>
 #include <QListView>
+#include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
@@ -47,8 +50,12 @@
 #include <QPromise>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QResizeEvent>
 #include <QSaveFile>
 #include <QSet>
+#include <QShortcut>
+#include <QTimer>
+#include <QVBoxLayout>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSlider>
@@ -215,16 +222,20 @@ ConfigurationListWidget::ConfigurationListWidget(QWidget* parent)
 	                                          new GameListNameDelegate(m_ui->cfgs_list));
 	m_ui->cfgs_list->setUniformRowHeights(true);
 	m_ui->cfgs_list->setSortingEnabled(true);
-	m_ui->cfgs_list->setColumnWidth(GAME_NAME_COLUMN, 320);
-	m_ui->cfgs_list->setColumnWidth(GAME_SERIAL_COLUMN, 110);
-	m_ui->cfgs_list->setColumnWidth(GAME_VERSION_COLUMN, 120);
-	m_ui->cfgs_list->setColumnWidth(GAME_FIRMWARE_VERSION_COLUMN, 150);
-	m_ui->cfgs_list->setColumnWidth(GAME_SIZE_COLUMN, 100);
-	m_ui->cfgs_list->setColumnWidth(GAME_PATH_COLUMN, 320);
-	m_ui->cfgs_list->setColumnWidth(GAME_STATUS_COLUMN, 150);
-	m_ui->cfgs_list->setColumnWidth(GAME_COMMENT_COLUMN, 240);
+	ResetListColumnDefaults();
 	m_ui->cfgs_list->sortItems(GAME_NAME_COLUMN, Qt::AscendingOrder);
 	SetupGameGrid(m_ui->cfgs_list, m_ui->cfgs_grid);
+	// Columns are reorderable and user-hideable from the header's context
+	// menu; both the order and the visibility persist in the settings.
+	auto* list_header = m_ui->cfgs_list->header();
+	list_header->setSectionsMovable(true);
+	list_header->setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(list_header, &QHeaderView::customContextMenuRequested, this,
+	        [this](const QPoint& pos) { ShowListColumnMenu(pos); });
+	connect(list_header, &QHeaderView::sectionResized, this,
+	        [this](int, int, int) { PersistHeaderStateSoon(); });
+	connect(list_header, &QHeaderView::sectionMoved, this,
+	        [this](int, int, int) { PersistHeaderStateSoon(); });
 	m_ui->cfgs_grid->setContextMenuPolicy(Qt::CustomContextMenu);
 
 	connect(m_ui->refresh_action, &QAction::triggered, this,
@@ -252,6 +263,7 @@ ConfigurationListWidget::ConfigurationListWidget(QWidget* parent)
 	        [this](const QPoint& pos) {
 		        ShowContextMenu(m_ui->cfgs_list->itemFromIndex(m_ui->cfgs_grid->indexAt(pos)));
 	        });
+	connect(m_ui->grid_view_button, &QToolButton::toggled, this, [this](bool) { UpdateToolbarIcons(); });
 	connect(m_ui->grid_view_button, &QToolButton::toggled, this, [this](bool grid) {
 		m_ui->grid_size_slider->setVisible(grid);
 		auto* view = grid ? static_cast<QAbstractItemView*>(m_ui->cfgs_grid) : m_ui->cfgs_list;
@@ -262,11 +274,135 @@ ConfigurationListWidget::ConfigurationListWidget(QWidget* parent)
 	});
 	connect(m_ui->grid_view_button, &QToolButton::clicked, this,
 	        &ConfigurationListWidget::WriteSettings);
+
+	// Grid sort control: mirrors the list's column sorting so the grid can be
+	// reordered without leaving card view. The list and grid share a model, so
+	// one sortItems call reorders both.
+	{
+		auto* sort_menu        = new QMenu(this);
+		m_sort_column_group    = new QActionGroup(sort_menu);
+		m_sort_direction_group = new QActionGroup(sort_menu);
+		m_sort_column_group->setExclusive(true);
+		m_sort_direction_group->setExclusive(true);
+		const struct {
+			int         column;
+			const char* label;
+		} column_actions[] = {
+		    {GAME_NAME_COLUMN, "Game name"},
+		    {GAME_SERIAL_COLUMN, "Serial"},
+		    {GAME_VERSION_COLUMN, "Game version"},
+		    {GAME_FIRMWARE_VERSION_COLUMN, "Firmware version"},
+		    {GAME_SIZE_COLUMN, "Size"},
+		    {GAME_STATUS_COLUMN, "Status"},
+		    {GAME_COMMENT_COLUMN, "Comments"},
+		};
+		for (const auto& entry: column_actions) {
+			auto* action = sort_menu->addAction(tr(entry.label));
+			action->setCheckable(true);
+			action->setData(entry.column);
+			m_sort_column_group->addAction(action);
+			connect(action, &QAction::triggered, this, [this, action]() {
+				ApplySort(action->data().toInt(), m_sort_order);
+			});
+		}
+		sort_menu->addSeparator();
+		for (const auto [label, order]: {std::pair{"Ascending", Qt::AscendingOrder},
+		                                 std::pair{"Descending", Qt::DescendingOrder}}) {
+			auto* action = sort_menu->addAction(tr(label));
+			action->setCheckable(true);
+			action->setData(static_cast<int>(order));
+			m_sort_direction_group->addAction(action);
+			connect(action, &QAction::triggered, this, [this, order]() {
+				ApplySort(m_sort_column, order);
+			});
+		}
+		m_ui->sort_button->setMenu(sort_menu);
+		m_ui->sort_button->setPopupMode(QToolButton::InstantPopup);
+	}
+
+	// Keyboard activation: the views are focusable, so Return launches the
+	// current game just like double-click does. WidgetWithChildrenShortcut
+	// keeps the binding off the search field and dialogs.
+	const auto launch_current = [this](ConfigurationItem* item) {
+		if (item != nullptr) {
+			list_itemDoubleClicked(item, GAME_NAME_COLUMN);
+		}
+	};
+	for (const auto key: {Qt::Key_Return, Qt::Key_Enter}) {
+		connect(new QShortcut(QKeySequence(key), m_ui->cfgs_list, nullptr, nullptr,
+		                      Qt::WidgetWithChildrenShortcut),
+		        &QShortcut::activated, this, [this, launch_current]() {
+			    launch_current(
+			        static_cast<ConfigurationItem*>(m_ui->cfgs_list->currentItem()));
+		        });
+		connect(new QShortcut(QKeySequence(key), m_ui->cfgs_grid, nullptr, nullptr,
+		                      Qt::WidgetWithChildrenShortcut),
+		        &QShortcut::activated, this, [this, launch_current]() {
+			    launch_current(static_cast<ConfigurationItem*>(
+			        m_ui->cfgs_list->itemFromIndex(m_ui->cfgs_grid->currentIndex())));
+		        });
+	}
+
+	// Explicit tab order: toolbar -> search -> views -> empty-state action.
+	setTabOrder(m_ui->refresh_button, m_ui->global_settings_button);
+	setTabOrder(m_ui->global_settings_button, m_ui->input_mapping_button);
+	setTabOrder(m_ui->input_mapping_button, m_ui->edit_button);
+	setTabOrder(m_ui->edit_button, m_ui->delete_button);
+	setTabOrder(m_ui->delete_button, m_ui->trophy_overview_button);
+	setTabOrder(m_ui->trophy_overview_button, m_ui->sort_button);
+	setTabOrder(m_ui->sort_button, m_ui->grid_size_slider);
+	setTabOrder(m_ui->grid_size_slider, m_ui->grid_view_button);
+	setTabOrder(m_ui->grid_view_button, m_ui->search_line_edit);
+	setTabOrder(m_ui->search_line_edit, m_ui->cfgs_list);
+	setTabOrder(m_ui->cfgs_list, m_ui->cfgs_grid);
+
 	connect(m_ui->cfgs_list->model(), &QAbstractItemModel::layoutChanged, this, [this]() {
 		filter_configurations(m_ui->search_line_edit->text());
 	});
 	connect(m_ui->search_line_edit, &QLineEdit::textChanged, this,
 	        &ConfigurationListWidget::filter_configurations);
+	m_ui->search_line_edit->installEventFilter(this);
+	// Empty-state overlay: shown when the views would otherwise be blank
+	// (no games configured) or nothing matches the search query.
+	m_empty_state = new QWidget(this);
+	m_empty_state->setObjectName(QStringLiteral("empty_state_overlay"));
+	auto* overlay_layout = new QVBoxLayout(m_empty_state);
+	overlay_layout->setAlignment(Qt::AlignCenter);
+	overlay_layout->setContentsMargins(24, 24, 24, 24);
+	overlay_layout->setSpacing(10);
+	m_empty_icon = new QLabel(m_empty_state);
+	m_empty_icon->setObjectName(QStringLiteral("empty_state_icon"));
+	m_empty_icon->setAlignment(Qt::AlignCenter);
+	m_empty_title = new QLabel(m_empty_state);
+	m_empty_title->setObjectName(QStringLiteral("empty_state_title"));
+	m_empty_title->setAlignment(Qt::AlignCenter);
+	m_empty_subtitle = new QLabel(m_empty_state);
+	m_empty_subtitle->setObjectName(QStringLiteral("empty_state_subtitle"));
+	m_empty_subtitle->setAlignment(Qt::AlignCenter);
+	m_empty_subtitle->setWordWrap(true);
+	m_empty_action = new QPushButton(m_empty_state);
+	m_empty_action->setObjectName(QStringLiteral("empty_state_action"));
+	m_empty_action->setCursor(Qt::PointingHandCursor);
+	overlay_layout->addWidget(m_empty_icon);
+	overlay_layout->addSpacing(4);
+	overlay_layout->addWidget(m_empty_title);
+	overlay_layout->addWidget(m_empty_subtitle);
+	overlay_layout->addSpacing(4);
+	overlay_layout->addWidget(m_empty_action, 0, Qt::AlignCenter);
+	connect(m_empty_action, &QPushButton::clicked, this, [this]() {
+		if (m_empty_is_search) {
+			m_ui->search_line_edit->clear();
+			m_ui->search_line_edit->setFocus();
+		} else {
+			edit_global_settings();
+		}
+	});
+	m_empty_state->setAccessibleName(tr("Empty library overlay"));
+	m_empty_state->hide();
+	// Tabbing out of the views reaches the overlay's action button (skipped
+	// automatically while the overlay is hidden).
+	setTabOrder(m_ui->cfgs_grid, m_empty_action);
+
 	connect(m_compatibility, &CompatibilityDatabase::Updated, this,
 	        &ConfigurationListWidget::ApplyCompatibility);
 
@@ -282,13 +418,28 @@ ConfigurationListWidget::ConfigurationListWidget(QWidget* parent)
 	});
 	connect(m_ui->grid_size_slider, &QSlider::sliderReleased, this,
 	        &ConfigurationListWidget::WriteSettings);
+	// Header-driven sorting is user input too: persist it and keep the grid
+	// menu's checkmarks in sync. This connects only after ReadSettings so the
+	// constructor's initial sortItems does not rewrite settings.
+	connect(m_ui->cfgs_list->header(), &QHeaderView::sortIndicatorChanged, this,
+	        [this](int column, Qt::SortOrder order) {
+		    m_sort_column = column;
+		    m_sort_order  = order;
+		    UpdateSortMenu();
+		    WriteSettings();
+	        });
 	if (m_compatibility->IsLocal()) {
 		m_compatibility->Load();
 	}
+	m_scan_watcher = new QFutureWatcher<QList<ScanResult>>(this);
+	connect(m_scan_watcher, &QFutureWatcher<QList<ScanResult>>::finished, this,
+	        [this]() { ApplyScanResults(m_scan_watcher->result()); });
 	ScanGameDirectory();
 	if (!m_compatibility->IsLocal()) {
 		m_compatibility->Load();
 	}
+	// Position the overlay only after layouts have been activated.
+	QTimer::singleShot(0, this, [this]() { UpdateEmptyState(); });
 }
 
 ConfigurationListWidget::~ConfigurationListWidget() {
@@ -300,7 +451,164 @@ void ConfigurationListWidget::changeEvent(QEvent* event) {
 	QWidget::changeEvent(event);
 	if (event->type() == QEvent::ApplicationPaletteChange || event->type() == QEvent::PaletteChange) {
 		UpdateToolbarIcons();
+		UpdateEmptyState();
 	}
+}
+
+void ConfigurationListWidget::resizeEvent(QResizeEvent* event) {
+	QWidget::resizeEvent(event);
+	UpdateEmptyState();
+}
+
+void ConfigurationListWidget::UpdateEmptyState() {
+	if (m_empty_state == nullptr) {
+		return;
+	}
+
+	if (m_scan_in_progress) {
+		// Rows are being rebuilt by an in-flight scan; don't flash the overlay.
+		m_empty_state->hide();
+		return;
+	}
+
+	const int  total   = m_ui->cfgs_list->topLevelItemCount();
+	const auto query   = m_ui->search_line_edit->text().trimmed();
+	int        visible = 0;
+	for (int index = 0; index < total; ++index) {
+		const auto* item = m_ui->cfgs_list->topLevelItem(index);
+		if (item != nullptr && !item->isHidden()) {
+			++visible;
+		}
+	}
+
+	m_empty_is_search = total > 0 && !query.isEmpty() && visible == 0;
+	const bool show = total == 0 || m_empty_is_search;
+
+	// Keep the overlay glued to the game views so it never detaches on resize.
+	const QRect rect = m_ui->game_views->geometry();
+	if (rect.width() > 0 && rect.height() > 0) {
+		m_empty_state->setGeometry(rect);
+	}
+
+	if (!show) {
+		m_empty_state->hide();
+		return;
+	}
+
+	m_empty_state->raise();
+	const bool dark = palette().color(QPalette::Window).lightness() < 128;
+	QColor muted = dark ? QColor(0x8a, 0x8a, 0x8a) : QColor(0xa8, 0xa8, 0xa8);
+
+	if (m_empty_is_search) {
+		// search.svg is a monochrome stroke icon — tint it to the muted color.
+		auto pixmap = QIcon(QStringLiteral(":/icons/search.svg")).pixmap(72, 72);
+		QPainter painter(&pixmap);
+		painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+		painter.fillRect(pixmap.rect(), muted);
+		painter.end();
+		m_empty_icon->setPixmap(pixmap);
+	} else {
+		// emustation5.png is the full-color brand tile — keep it as-is.
+		m_empty_icon->setPixmap(QIcon(QStringLiteral(":/icons/emustation5.png")).pixmap(96, 96));
+	}
+
+	if (m_empty_is_search) {
+		m_empty_title->setText(tr("No matches"));
+		m_empty_subtitle->setText(tr("No games match \"%1\". Try a different title or serial.").arg(query));
+		m_empty_action->setText(tr("Clear Search"));
+	} else {
+		m_empty_title->setText(tr("No games yet"));
+		m_empty_subtitle->setText(tr("Add a folder containing your games\nand EmuStation5 will list them here."));
+		m_empty_action->setText(tr("Add Game Folder…"));
+	}
+
+	m_empty_state->show();
+}
+
+void ConfigurationListWidget::ApplySort(int column, Qt::SortOrder order) {
+	m_sort_column = column;
+	m_sort_order  = order;
+	m_ui->cfgs_list->setSortingEnabled(true);
+	m_ui->cfgs_list->sortItems(column, order);
+	UpdateSortMenu();
+}
+
+void ConfigurationListWidget::UpdateSortMenu() {
+	if (m_sort_column_group == nullptr || m_sort_direction_group == nullptr) {
+		return;
+	}
+	for (QAction* action: m_sort_column_group->actions()) {
+		action->setChecked(action->data().toInt() == m_sort_column);
+	}
+	for (QAction* action: m_sort_direction_group->actions()) {
+		action->setChecked(action->data().toInt() == static_cast<int>(m_sort_order));
+	}
+}
+
+void ConfigurationListWidget::ResetListColumnDefaults() {
+	auto* header  = m_ui->cfgs_list->header();
+	const int count = m_ui->cfgs_list->columnCount();
+	for (int col = 0; col < count; ++col) {
+		m_ui->cfgs_list->setColumnHidden(col, false);
+	}
+	for (int col = 0; col < count; ++col) {
+		header->moveSection(header->visualIndex(col), col);
+	}
+	m_ui->cfgs_list->setColumnWidth(GAME_NAME_COLUMN, 320);
+	m_ui->cfgs_list->setColumnWidth(GAME_SERIAL_COLUMN, 110);
+	m_ui->cfgs_list->setColumnWidth(GAME_VERSION_COLUMN, 120);
+	m_ui->cfgs_list->setColumnWidth(GAME_FIRMWARE_VERSION_COLUMN, 150);
+	m_ui->cfgs_list->setColumnWidth(GAME_SIZE_COLUMN, 100);
+	m_ui->cfgs_list->setColumnWidth(GAME_PATH_COLUMN, 320);
+	m_ui->cfgs_list->setColumnWidth(GAME_STATUS_COLUMN, 150);
+	m_ui->cfgs_list->setColumnWidth(GAME_COMMENT_COLUMN, 240);
+}
+
+void ConfigurationListWidget::ShowListColumnMenu(const QPoint& pos) {
+	auto*       header = m_ui->cfgs_list->header();
+	QMenu       menu(this);
+	const auto* header_item = m_ui->cfgs_list->headerItem();
+	// The Game column stays visible — it anchors the grid sort and the
+	// double-click-to-launch behavior.
+	for (int col = 1; col < m_ui->cfgs_list->columnCount(); ++col) {
+		const QString title = header_item != nullptr ? header_item->text(col)
+		                                             : QString::number(col);
+		auto* action = menu.addAction(title);
+		action->setCheckable(true);
+		action->setChecked(!m_ui->cfgs_list->isColumnHidden(col));
+		connect(action, &QAction::triggered, this, [this, col, action]() {
+			m_ui->cfgs_list->setColumnHidden(col, !action->isChecked());
+			WriteSettings();
+		});
+	}
+	menu.addSeparator();
+	connect(menu.addAction(tr("Reset Columns to Defaults")), &QAction::triggered, this, [this]() {
+		ResetListColumnDefaults();
+		WriteSettings();
+	});
+	menu.exec(header->mapToGlobal(pos));
+}
+
+void ConfigurationListWidget::PersistHeaderStateSoon() {
+	if (m_header_persist_timer == nullptr) {
+		m_header_persist_timer = new QTimer(this);
+		m_header_persist_timer->setSingleShot(true);
+		m_header_persist_timer->setInterval(400);
+		connect(m_header_persist_timer, &QTimer::timeout, this,
+		        &ConfigurationListWidget::WriteSettings);
+	}
+	m_header_persist_timer->start();
+}
+
+bool ConfigurationListWidget::eventFilter(QObject* watched, QEvent* event) {
+	if (watched == m_ui->search_line_edit && event->type() == QEvent::FocusIn) {
+		// The user typed a query — select it on focus so they can immediately replace it.
+		if (!m_ui->search_line_edit->text().isEmpty()) {
+			m_ui->search_line_edit->selectAll();
+		}
+		// ... or clear a stuck selection if they tabbed past.
+	}
+	return QWidget::eventFilter(watched, event);
 }
 
 void ConfigurationListWidget::UpdateToolbarIcons() {
@@ -314,6 +622,24 @@ void ConfigurationListWidget::UpdateToolbarIcons() {
 		button->setIcon(QIcon(pixmap));
 	};
 
+	// The search field icon should stay a muted glyph, not the same brightness as the toolbar.
+	auto muted = color;
+	if (color == QColor(Qt::white)) {
+		muted = QColor(0x8f, 0x8f, 0x8f);
+	}
+	auto pixmap = QIcon(QStringLiteral(":/icons/search.svg")).pixmap(QSize(20, 20));
+	QPainter painter(&pixmap);
+	painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+	painter.fillRect(pixmap.rect(), muted);
+	painter.end();
+	QIcon search_icon(pixmap);
+	if (m_search_action == nullptr) {
+		m_search_action = new QAction(search_icon, tr("Search"), this);
+		m_ui->search_line_edit->addAction(m_search_action, QLineEdit::LeadingPosition);
+	} else {
+		m_search_action->setIcon(search_icon);
+	}
+
 	set_icon(m_ui->refresh_button, QStringLiteral(":/icons/refresh.svg"));
 	m_ui->refresh_action->setIcon(m_ui->refresh_button->icon());
 	set_icon(m_ui->global_settings_button, QStringLiteral(":/icons/global-settings.svg"));
@@ -322,6 +648,19 @@ void ConfigurationListWidget::UpdateToolbarIcons() {
 	set_icon(m_ui->delete_button, QStringLiteral(":/icons/remove-configuration.svg"));
 	set_icon(m_ui->trophy_overview_button, QStringLiteral(":/icons/trophy.svg"));
 	set_icon(m_ui->grid_view_button, QStringLiteral(":/icons/grid-view.svg"));
+	set_icon(m_ui->sort_button, QStringLiteral(":/icons/sort.svg"));
+	if (m_ui->grid_view_button->isChecked()) {
+		// The checked grid toggle is accent-filled in both themes; repaint the
+		// glyph white so it stays legible on the accent background.
+		auto pixmap = QIcon(QStringLiteral(":/icons/grid-view.svg"))
+		                 .pixmap(m_ui->grid_view_button->iconSize(),
+		                         m_ui->grid_view_button->devicePixelRatioF());
+		QPainter painter(&pixmap);
+		painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+		painter.fillRect(pixmap.rect(), Qt::white);
+		painter.end();
+		m_ui->grid_view_button->setIcon(QIcon(pixmap));
+	}
 }
 
 void ConfigurationListWidget::WriteSettings() {
@@ -348,6 +687,9 @@ void ConfigurationListWidget::WriteSettings() {
 	s->setValue(CONF_ADDONS_DIR, m_addons_dir);
 	s->setValue("grid_view", m_ui->grid_view_button->isChecked());
 	s->setValue("grid_icon_width", m_ui->grid_size_slider->value());
+	s->setValue("grid_sort_column", m_sort_column);
+	s->setValue("grid_sort_order", static_cast<int>(m_sort_order));
+	s->setValue("list_header_state", m_ui->cfgs_list->header()->saveState());
 	s->remove(CONF_GAME_DIR);
 	s->endGroup();
 
@@ -398,6 +740,20 @@ void ConfigurationListWidget::ReadSettings() {
 	m_ui->grid_view_button->setChecked(s->value("grid_view", false).toBool());
 	m_ui->grid_size_slider->setValue(
 	    s->value("grid_icon_width", m_ui->grid_size_slider->value()).toInt());
+	m_sort_column = s->value("grid_sort_column", GAME_NAME_COLUMN).toInt();
+	m_sort_order  = s->value("grid_sort_order", static_cast<int>(Qt::AscendingOrder)).toInt() ==
+	                    static_cast<int>(Qt::DescendingOrder)
+	                 ? Qt::DescendingOrder
+	                 : Qt::AscendingOrder;
+	m_ui->cfgs_list->setSortingEnabled(true);
+	m_ui->cfgs_list->sortItems(m_sort_column, m_sort_order);
+	UpdateSortMenu();
+	// Restored after the programmatic sort so the user's column layout
+	// (widths, order, visibility) wins over the compiled-in defaults.
+	const auto header_state = s->value("list_header_state").toByteArray();
+	if (!header_state.isEmpty()) {
+		m_ui->cfgs_list->header()->restoreState(header_state);
+	}
 	m_game_dirs = NormalizeGameDirectories(SettingsStringList(s->value(CONF_GAME_DIRS)));
 	if (m_game_dirs.isEmpty()) {
 		m_game_dirs = NormalizeGameDirectories(SettingsStringList(s->value(CONF_GAME_DIR)));
@@ -644,69 +1000,158 @@ bool ConfigurationListWidget::HasValidGameDirectory() const {
 }
 
 void ConfigurationListWidget::ScanGameDirectory() {
+	// Serialized rescan requests: if a scan is requested while one is in flight,
+	// run exactly one follow-up pass instead of starting a concurrent one.
+	if (m_scan_in_progress) {
+		m_scan_dirty = true;
+		return;
+	}
+	m_scan_in_progress = true;
+
 	// Commit an active inline editor before destroying its row or replacing its data.
 	if (auto* focused = QApplication::focusWidget();
 	    focused != nullptr && m_ui->cfgs_list->isAncestorOf(focused)) {
 		m_ui->cfgs_list->setFocus();
 	}
 
-	const auto selected_path =
-	    m_selected_item != nullptr ? m_selected_item->GetInfo().game_path : QString();
-	const bool           sorting_enabled = m_ui->cfgs_list->isSortingEnabled();
-	const int            sort_column     = m_ui->cfgs_list->sortColumn();
-	const auto           sort_order      = m_ui->cfgs_list->header()->sortIndicatorOrder();
+	m_pending_selected_path   = m_selected_item != nullptr
+	                                ? m_selected_item->GetInfo().game_path
+	                                : QString();
+	m_pending_sorting_enabled = m_ui->cfgs_list->isSortingEnabled();
+	m_pending_sort_column     = m_ui->cfgs_list->sortColumn();
+	m_pending_sort_order      = m_ui->cfgs_list->header()->sortIndicatorOrder();
 	const QSignalBlocker blocker(m_ui->cfgs_list);
 	m_ui->cfgs_list->setSortingEnabled(false);
 	m_selected_item = nullptr;
 
 	// MainDialog tracks the running item, so keep its identity even if its
 	// directory is no longer present. Other rows can be rebuilt from disk.
-	QMap<QString, ConfigurationItem*> running_items;
 	for (int index = m_ui->cfgs_list->topLevelItemCount() - 1; index >= 0; index--) {
 		auto* item = static_cast<ConfigurationItem*>(m_ui->cfgs_list->topLevelItem(index));
 		if (item->IsRunning()) {
-			running_items.insert(PathKey(item->GetInfo().game_path), item);
+			m_pending_running.insert(PathKey(item->GetInfo().game_path), item);
 		} else {
 			delete item;
 		}
 	}
 
-	const QString eboot_name = QStringLiteral("eboot.bin");
-	QSet<QString> found_games;
-	const auto add_game = [this, &found_games, &eboot_name,
-	                       &running_items](const QString& base, const QString& game_path,
-	                                       const QString& legacy_game_path, const QString& fallback,
-	                                       bool archive) {
-		const QString game_key = PathKey(game_path);
-		if (game_key.isEmpty() || found_games.contains(game_key)) {
-			return;
-		}
-		// Keep the index and decompression cache alive through validation, metadata and icon
-		// reads, after rejecting duplicate candidates from overlapping game folders.
-		const auto reader = archive ? Common::OpenArchive(GameContent::ToPath(base)) : nullptr;
-		if (archive && (reader == nullptr || !GameContent::FileExists(base, eboot_name))) {
-			return;
-		}
-		found_games.insert(game_key);
+	struct ScanCandidate {
+		QString base;
+		QString game_path;
+		QString legacy_game_path;
+		QString fallback;
+		bool    archive = false;
+	};
 
-		const auto metadata =
-		    GetGameMetadata(GameContent::ReadFile(base, QStringLiteral("sce_sys/param.json"),
-		                                          GameContent::MaxMetadataSize),
-		                    fallback);
+	const QString         eboot_name = QStringLiteral("eboot.bin");
+	QList<ScanCandidate>  candidates;
+	const auto            append_archives = [&candidates](const QDir& directory, const QDir& root) {
+		const auto entries = directory.entryInfoList(QDir::Files | QDir::NoSymLinks, QDir::Name);
+		for (const auto& archive: entries) {
+			const auto base = archive.absoluteFilePath();
+			if (!Common::IsSupportedArchive(GameContent::ToPath(base))) {
+				continue;
+			}
+			candidates.append({base, QDir::cleanPath(base), root.relativeFilePath(base),
+			                   archive.completeBaseName(), true});
+		}
+	};
+
+	for (const auto& root_path: m_game_dirs) {
+		QDir root(root_path);
+		if (root_path.isEmpty() || !root.exists()) {
+			continue;
+		}
+
+		append_archives(root, root);
+		QList<QDir> pending_dirs;
+		const auto  root_subdirs =
+		    root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks);
+		for (const auto& subdir: root_subdirs) {
+			pending_dirs.append(QDir(subdir.absoluteFilePath()));
+		}
+
+		while (!pending_dirs.isEmpty()) {
+			QDir game_dir = pending_dirs.takeFirst();
+			append_archives(game_dir, root);
+
+			if (game_dir.exists(eboot_name)) {
+				const QString game_path        = NormalizeGameDirectory(game_dir.absolutePath());
+				const QString legacy_game_path = root.relativeFilePath(game_dir.absolutePath());
+				candidates.append({game_dir.absolutePath(), game_path, legacy_game_path,
+				                   game_dir.dirName(), false});
+				continue;
+			}
+
+			const auto subdirs =
+			    game_dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks);
+			for (const auto& subdir: subdirs) {
+				pending_dirs.append(QDir(subdir.absoluteFilePath()));
+			}
+		}
+	}
+
+	// All I/O and archive work happens here, off the UI thread. Only plain data
+	// crosses back into ApplyScanResults.
+	m_scan_watcher->setFuture(QtConcurrent::run([candidates, eboot_name]() -> QList<ScanResult> {
+		QList<ScanResult> results;
+		QSet<QString>     found;
+		results.reserve(candidates.size());
+		for (const auto& candidate: candidates) {
+			const QString key = PathKey(candidate.game_path);
+			if (key.isEmpty() || found.contains(key)) {
+				continue;
+			}
+			// Keep the index and decompression cache alive through validation and reads,
+			// after rejecting duplicate candidates from overlapping game folders.
+			if (candidate.archive) {
+				const auto reader = Common::OpenArchive(GameContent::ToPath(candidate.base));
+				if (reader == nullptr || !GameContent::FileExists(candidate.base, eboot_name)) {
+					continue;
+				}
+			}
+			found.insert(key);
+
+			ScanResult result;
+			result.base             = candidate.base;
+			result.game_path        = candidate.game_path;
+			result.legacy_game_path = candidate.legacy_game_path;
+			result.fallback         = candidate.fallback;
+			result.archive          = candidate.archive;
+			result.param_data =
+			    GameContent::ReadFile(candidate.base, QStringLiteral("sce_sys/param.json"),
+			                          GameContent::MaxMetadataSize);
+			result.icon_data = GameContent::ReadFile(candidate.base, QStringLiteral("sce_sys/icon0.png"),
+			                                         GameContent::MaxImageSize);
+			results.append(std::move(result));
+		}
+		return results;
+	}));
+}
+
+void ConfigurationListWidget::ApplyScanResults(const QList<ScanResult>& results) {
+	m_scan_in_progress = false;
+
+	const auto add_game = [this](const ScanResult& result) {
+		const auto metadata = GetGameMetadata(result.param_data, result.fallback);
 		auto info = std::make_unique<Configuration>();
 		info->custom_settings =
-		    FindCustomInfo(&m_custom_infos, game_path, legacy_game_path) != nullptr;
+		    FindCustomInfo(&m_custom_infos, result.game_path, result.legacy_game_path) != nullptr;
 
-		SetGameFiles(*info, base, game_path, metadata, archive);
+		SetGameFiles(*info, result.base, result.game_path, metadata, result.archive);
 		const auto* compatibility = m_compatibility->Find(info->title_id);
 		if (compatibility != nullptr) {
 			info->game_status  = compatibility->status;
 			info->game_comment = compatibility->comment;
 		}
 
-		if (auto* item = running_items.value(game_key); item != nullptr) {
+		const auto game_key   = PathKey(result.game_path);
+		const auto running    = m_pending_running.find(game_key);
+		if (running != m_pending_running.end()) {
 			// Refresh metadata without losing the running row's identity.
+			auto* item = running.value();
 			const QSignalBlocker status_blocker(item->GetStatusCombo());
+			item->SetIconData(result.icon_data);
 			item->GetInfo().CopyGameInfoFrom(*info);
 			item->Update(true);
 			item->SetCompatibilityEditable(m_compatibility->IsLocal() &&
@@ -714,7 +1159,7 @@ void ConfigurationListWidget::ScanGameDirectory() {
 			return;
 		}
 
-		auto* item = new ConfigurationItem(std::move(info), m_ui->cfgs_list);
+		auto* item = new ConfigurationItem(std::move(info), m_ui->cfgs_list, result.icon_data);
 		item->SetCompatibilityEditable(m_compatibility->IsLocal() &&
 		                               !item->GetInfo().title_id.trimmed().isEmpty());
 		connect(item->GetStatusCombo(), &QComboBox::currentIndexChanged, item,
@@ -750,68 +1195,33 @@ void ConfigurationListWidget::ScanGameDirectory() {
 			SelectItem(item);
 		});
 	};
-	const auto scan_archives = [&add_game](const QDir& directory, const QDir& root) {
-		const auto entries = directory.entryInfoList(QDir::Files | QDir::NoSymLinks, QDir::Name);
-		for (const auto& archive: entries) {
-			const auto base = archive.absoluteFilePath();
-			if (!Common::IsSupportedArchive(GameContent::ToPath(base))) {
-				continue;
-			}
-			add_game(base, QDir::cleanPath(base), root.relativeFilePath(base),
-			         archive.completeBaseName(), true);
-		}
-	};
 
-	for (const auto& root_path: m_game_dirs) {
-		QDir root(root_path);
-		if (root_path.isEmpty() || !root.exists()) {
-			continue;
-		}
-
-		scan_archives(root, root);
-		QList<QDir> pending_dirs;
-		const auto  root_subdirs =
-		    root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks);
-		for (const auto& subdir: root_subdirs) {
-			pending_dirs.append(QDir(subdir.absoluteFilePath()));
-		}
-
-		while (!pending_dirs.isEmpty()) {
-			QDir game_dir = pending_dirs.takeFirst();
-			scan_archives(game_dir, root);
-
-			if (game_dir.exists(eboot_name)) {
-				const QString game_path        = NormalizeGameDirectory(game_dir.absolutePath());
-				const QString legacy_game_path = root.relativeFilePath(game_dir.absolutePath());
-				add_game(game_dir.absolutePath(), game_path, legacy_game_path, game_dir.dirName(),
-				         false);
-				continue;
-			}
-
-			const auto subdirs =
-			    game_dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks);
-			for (const auto& subdir: subdirs) {
-				pending_dirs.append(QDir(subdir.absoluteFilePath()));
-			}
-		}
+	for (const auto& result: results) {
+		add_game(result);
 	}
+	m_pending_running.clear();
 
-	m_ui->cfgs_list->setSortingEnabled(sorting_enabled);
-	if (sorting_enabled) {
-		m_ui->cfgs_list->sortItems(sort_column, sort_order);
+	m_ui->cfgs_list->setSortingEnabled(m_pending_sorting_enabled);
+	if (m_pending_sorting_enabled) {
+		m_ui->cfgs_list->sortItems(m_pending_sort_column, m_pending_sort_order);
 	}
 	filter_configurations(m_ui->search_line_edit->text());
 
 	ConfigurationItem* selected_item = nullptr;
 	for (int index = 0; index < m_ui->cfgs_list->topLevelItemCount(); index++) {
 		auto* item = static_cast<ConfigurationItem*>(m_ui->cfgs_list->topLevelItem(index));
-		if (!item->isHidden() && item->GetInfo().game_path == selected_path) {
+		if (!item->isHidden() && item->GetInfo().game_path == m_pending_selected_path) {
 			selected_item = item;
 			break;
 		}
 	}
 	m_ui->cfgs_list->setCurrentItem(selected_item);
 	SelectItem(selected_item);
+
+	if (m_scan_dirty) {
+		m_scan_dirty = false;
+		ScanGameDirectory();
+	}
 }
 
 void ConfigurationListWidget::edit_configuration() {
@@ -1229,6 +1639,8 @@ void ConfigurationListWidget::filter_configurations(const QString& text) {
 		m_ui->cfgs_list->setCurrentItem(nullptr);
 		SelectItem(nullptr);
 	}
+
+	UpdateEmptyState();
 }
 
 void ConfigurationListWidget::SelectItem(QTreeWidgetItem* witem) {

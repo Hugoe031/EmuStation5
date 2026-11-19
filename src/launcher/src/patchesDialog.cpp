@@ -51,6 +51,7 @@ PatchesDialog::PatchesDialog(const Configuration& game, QWidget* parent)
       m_process(QFileInfo(game.elf.isEmpty() ? QStringLiteral("eboot.bin") : game.elf).fileName()) {
 	setAttribute(Qt::WA_DeleteOnClose);
 	setWindowTitle(tr("Cheats (experimental) - %1").arg(game.name));
+	setAccessibleName(tr("Cheats for %1").arg(game.name));
 	resize(800, 640);
 
 	auto* layout     = new QVBoxLayout(this);
@@ -59,6 +60,9 @@ PatchesDialog::PatchesDialog(const Configuration& game, QWidget* parent)
 	                        .arg(m_title_id, m_version.isEmpty() ? tr("Unknown") : m_version));
 	layout->addWidget(game_label);
 	m_tabs = new QTabWidget(this);
+	m_tabs->setAccessibleName(tr("Cheat sources"));
+	m_tabs->setAccessibleDescription(
+	    tr("Remote cheats from the community repository, or cheats imported locally"));
 	layout->addWidget(m_tabs);
 
 	auto* remote        = new QWidget(m_tabs);
@@ -79,10 +83,13 @@ PatchesDialog::PatchesDialog(const Configuration& game, QWidget* parent)
 	m_files->setHeaderLabels({tr("Version"), tr("Format"), tr("File")});
 	m_files->setRootIsDecorated(false);
 	m_files->setSelectionMode(QAbstractItemView::SingleSelection);
+	m_files->setAccessibleName(tr("Community cheat files"));
 	m_files->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
 	m_files->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 	m_files->header()->setSectionResizeMode(2, QHeaderView::Stretch);
 	m_preview = new QListWidget(split);
+	m_preview->setAccessibleName(tr("Cheat file preview"));
+	m_preview->setAccessibleDescription(tr("Read-only preview of the cheats in the selected file"));
 	remote_layout->addWidget(split, 1);
 	m_remote_status  = StatusLabel(remote);
 	m_preview_status = StatusLabel(remote);
@@ -92,12 +99,18 @@ PatchesDialog::PatchesDialog(const Configuration& game, QWidget* parent)
 	m_refresh            = remote_buttons->addButton(tr("Refresh"), QDialogButtonBox::ActionRole);
 	m_import = remote_buttons->addButton(tr("Import to Local"), QDialogButtonBox::ActionRole);
 	m_import->setEnabled(false);
+	m_refresh->setAccessibleDescription(tr("Reload the community cheat repository"));
+	m_import->setAccessibleDescription(
+	    tr("Import the cheats from the selected file into the local list"));
 	remote_layout->addWidget(remote_buttons);
 
 	auto* local        = new QWidget(m_tabs);
 	auto* local_layout = new QVBoxLayout(local);
 	m_tabs->addTab(local, tr("Local"));
 	m_patches = new QListWidget(local);
+	m_patches->setAccessibleName(tr("Local cheats"));
+	m_patches->setAccessibleDescription(
+	    tr("Locally imported cheats. Toggle entries to enable or disable them in game"));
 	m_status  = StatusLabel(local);
 	local_layout->addWidget(m_patches, 1);
 	local_layout->addWidget(m_status);
@@ -125,6 +138,19 @@ PatchesDialog::PatchesDialog(const Configuration& game, QWidget* parent)
 	connect(m_refresh, &QPushButton::clicked, this, &PatchesDialog::LoadRemote);
 	connect(m_import, &QPushButton::clicked, this, &PatchesDialog::ImportRemote);
 	connect(m_files, &QTreeWidget::currentItemChanged, this, &PatchesDialog::PreviewRemote);
+	// Remote tab: file list, preview, then the action buttons in reading order.
+	setTabOrder(m_files, m_preview);
+	setTabOrder(m_preview, m_refresh);
+	setTabOrder(m_refresh, m_import);
+	// Local tab: list, then bulk actions, reload/apply, and the Close button.
+	setTabOrder(m_patches, enable_all);
+	setTabOrder(enable_all, disable_all);
+	setTabOrder(disable_all, reload);
+	setTabOrder(reload, m_apply);
+	if (auto* close = buttons->button(QDialogButtonBox::Close)) {
+		close->setAccessibleName(tr("Close"));
+		setTabOrder(m_apply, close);
+	}
 
 	m_repository = new Cheats::CheatRepository(this);
 	connect(

@@ -183,7 +183,7 @@ TEST(File, GetTimesReportsExactNanoseconds) {
 	ASSERT_TRUE(Common::File().Create(path));
 	// A multiple of 100 ns, the Windows file time unit.
 	constexpr int64_t WRITE_NS = 1700000000123456700;
-	SetUnixWriteTime(path, WRITE_NS);
+	ASSERT_TRUE(SetUnixWriteTime(path, WRITE_NS));
 
 	const auto times = Common::File::GetTimes(path);
 	ASSERT_TRUE(times.has_value());

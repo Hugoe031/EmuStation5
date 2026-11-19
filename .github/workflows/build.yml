@@ -231,7 +231,7 @@ jobs:
           archive="$RUNNER_TEMP/MoltenVK-macos.tar"
           package="$RUNNER_TEMP/MoltenVK"
           install_dir="_Build/macos/install"
-          app_dir="$install_dir/KytyPS5.app"
+          app_dir="$install_dir/EmuStation5.app"
           moltenvk="$install_dir/libMoltenVK.dylib"
           curl --fail --location --retry 3 \
             --output "$archive" \
@@ -253,7 +253,7 @@ jobs:
         shell: bash
         run: |
           install_dir="_Build/macos/install"
-          app_dir="$install_dir/KytyPS5.app"
+          app_dir="$install_dir/EmuStation5.app"
           test -d "$app_dir"
           for binary in \
             "$install_dir/kyty_emulator" \
@@ -410,13 +410,13 @@ jobs:
       - name: Verify artifacts
         shell: bash
         run: |
-          file _Build/linux/install/kyty_launcher
+          file _Build/linux/install/EmuStation5
           file _Build/linux/install/kyty_emulator
           test -x _Build/linux/install/kyty_updater
           test -z "$(file _Build/linux/install/kyty_* | grep 'not stripped')"
           file _Build/linux/install/kyty_emulator | grep -q "ELF 64-bit LSB .*x86-64"
           ldd _Build/linux/install/kyty_emulator > /dev/null
-          readelf -d _Build/linux/install/kyty_launcher | grep -q 'RPATH.*\$ORIGIN/lib'
+          readelf -d _Build/linux/install/EmuStation5 | grep -q 'RPATH.*\$ORIGIN/lib'
           test -z "$(find _Build/linux/install -name '*.so.*.*' -o -name '*.a' -o -name include)"
           while IFS= read -r -d '' binary; do
             while read -r dependency; do
@@ -426,8 +426,8 @@ jobs:
                 sed -n 's/.*Shared library: \[\(libQt6[^]]*\|libicu[^]]*\)\].*/\1/p'
             )
           done < <(
-            find _Build/linux/install/kyty_launcher _Build/linux/install/plugins \
-              -type f \( -name kyty_launcher -o -name '*.so' \) -print0
+            find _Build/linux/install/EmuStation5 _Build/linux/install/plugins \
+              -type f \( -name EmuStation5 -o -name '*.so' \) -print0
           )
           _Build/linux/install/kyty_emulator --help > /dev/null
 
@@ -502,7 +502,7 @@ jobs:
           linux_dir="artifacts/KytyPS5-Linux-x86_64"
           test -d "$linux_dir"
           chmod a+x \
-            "$linux_dir/kyty_launcher" \
+            "$linux_dir/EmuStation5" \
             "$linux_dir/kyty_emulator" \
             "$linux_dir/kyty_updater"
           tar -C "$linux_dir" -czf \

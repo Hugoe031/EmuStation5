@@ -1,18 +1,21 @@
 ﻿{
     "cmake.sourceDirectory": "${workspaceFolder}",
-    "cmake.buildDirectory": "${workspaceFolder}/_Build/vscode-clang",
+    "cmake.buildDirectory": "${workspaceFolder}/_Build/windows-clangcl",
     "cmake.generator": "Ninja",
     "cmake.useVsDeveloperEnvironment": "always",
     "cmake.environment": {
         "CC": "clang-cl",
-        "CXX": "clang-cl"
+        "CXX": "clang-cl",
+        "PATH": "C:\\Program Files\\LLVM\\bin;${workspaceFolder}\\_Build\\tools\\glslang\\bin;${workspaceFolder}\\_Build\\Qt\\6.8.3\\msvc2022_64\\bin;${env:PATH}"
     },
     "cmake.configureSettings": {
+        "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "clang-cl",
         "CMAKE_CXX_COMPILER": "clang-cl",
-        "CMAKE_PREFIX_PATH": "C:/Qt/6.11.0/msvc2022_64"
+        "CMAKE_PREFIX_PATH": "${workspaceFolder}/_Build/Qt/6.8.3/msvc2022_64",
+        "KYTY_GLSLANG_VALIDATOR": "${workspaceFolder}/_Build/tools/glslang/bin/glslang.exe"
     },
     "C_Cpp.default.intelliSenseMode": "windows-clang-x64",
-    "C_Cpp.default.compileCommands": "${workspaceFolder}/_Build/vscode-clang/compile_commands.json",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/_Build/windows-clangcl/compile_commands.json",
     "C_Cpp.default.cppStandard": "c++20"
 }

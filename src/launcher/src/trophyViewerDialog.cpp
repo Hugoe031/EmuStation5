@@ -101,6 +101,7 @@ void ShowTrophyInspector(QWidget* parent, int id, const Common::Trophies::Trophy
                          bool unlocked, const QString& earned_date) {
 	QDialog dialog(parent);
 	dialog.setWindowTitle(QObject::tr("Trophy Details"));
+	dialog.setAccessibleName(QObject::tr("Trophy details"));
 	dialog.resize(640, 380);
 	auto* layout = new QVBoxLayout(&dialog);
 	auto* top    = new QHBoxLayout;
@@ -115,6 +116,8 @@ void ShowTrophyInspector(QWidget* parent, int id, const Common::Trophies::Trophy
 	auto* subtitle = new QLabel(QObject::tr("Hidden trophy"), &dialog);
 	subtitle->setStyleSheet(QStringLiteral("font-size: 16px;"));
 	auto* reveal = new QPushButton(QObject::tr("Show Hidden Trophy"), &dialog);
+	reveal->setAccessibleDescription(
+	    QObject::tr("Reveal the name and description of this hidden trophy"));
 	text_box->addWidget(name);
 	text_box->addWidget(subtitle);
 	text_box->addWidget(reveal, 0, Qt::AlignLeft);
@@ -150,6 +153,10 @@ void ShowTrophyInspector(QWidget* parent, int id, const Common::Trophies::Trophy
 	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
 	QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 	layout->addWidget(buttons);
+	if (auto* close = buttons->button(QDialogButtonBox::Close)) {
+		close->setAccessibleName(QObject::tr("Close"));
+		QDialog::setTabOrder(reveal, close);
+	}
 
 	const auto refresh = [&](bool masked) {
 		icon->setPixmap(TrophyIcon(trophy, unlocked, masked, 148));
@@ -173,16 +180,23 @@ void ShowTrophyInspector(QWidget* parent, int id, const Common::Trophies::Trophy
 
 TrophyViewerDialog::TrophyViewerDialog(QWidget* parent): QDialog(parent) {
 	setWindowTitle(tr("Trophy Viewer"));
+	setAccessibleName(tr("Trophy Viewer"));
 	resize(1000, 640);
 
 	auto* layout = new QVBoxLayout(this);
 
 	m_tabs = new QTabWidget(this);
+	m_tabs->setAccessibleName(tr("Trophy categories"));
+	m_tabs->setAccessibleDescription(tr("One tab per game with trophy data"));
 	layout->addWidget(m_tabs, 1);
 
 	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
 	connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 	layout->addWidget(buttons);
+	if (auto* close = buttons->button(QDialogButtonBox::Close)) {
+		close->setAccessibleName(tr("Close"));
+		setTabOrder(m_tabs, close);
+	}
 }
 
 bool TrophyViewerDialog::HasTrophyData(const Configuration* info) {
@@ -285,6 +299,7 @@ void TrophyViewerDialog::ShowOverview(const std::vector<const Configuration*>& g
                                       const QString& runtime_directory, QWidget* parent) {
 	QDialog dialog(parent);
 	dialog.setWindowTitle(QObject::tr("Trophies"));
+	dialog.setAccessibleName(QObject::tr("Trophy overview"));
 	dialog.resize(820, 640);
 	dialog.setStyleSheet(QStringLiteral(
 	    "QDialog { background: palette(window); }"
@@ -332,6 +347,9 @@ void TrophyViewerDialog::ShowOverview(const std::vector<const Configuration*>& g
 	auto* list = new QListWidget(&dialog);
 	list->setSelectionMode(QAbstractItemView::SingleSelection);
 	list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+	list->setAccessibleName(QObject::tr("Games with trophies"));
+	list->setAccessibleDescription(
+	    QObject::tr("Select an entry to open the trophies for that game"));
 	layout->addWidget(list, 1);
 
 	for (size_t index = 0; index < trophy_games.size(); ++index) {
@@ -405,6 +423,10 @@ void TrophyViewerDialog::ShowOverview(const std::vector<const Configuration*>& g
 	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
 	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 	layout->addWidget(buttons);
+	if (auto* close = buttons->button(QDialogButtonBox::Close)) {
+		close->setAccessibleName(QObject::tr("Close"));
+		QDialog::setTabOrder(list, close);
+	}
 	dialog.exec();
 }
 
@@ -491,6 +513,8 @@ bool TrophyViewerDialog::LoadGame(const Configuration& info, const QString& runt
 		list->setSelectionMode(QAbstractItemView::NoSelection);
 		list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
 		list->setSpacing(4);
+		list->setAccessibleName(
+		    tr("Trophies for %1").arg(QString::fromStdString(package.title)));
 		page_layout->addWidget(list, 1);
 		for (const auto& [id, trophy]: package.trophies) {
 			const bool trophy_unlocked = unlocks.unlocked.contains(id);
