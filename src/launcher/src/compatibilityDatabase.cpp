@@ -22,7 +22,7 @@
 namespace {
 
 constexpr char FILE_NAME[]    = "compatibility_db.json";
-constexpr char URL[]          = "https://kytyps5.github.io/data/compatibility.json";
+constexpr char URL[]          = "https://hugoe031.github.io/EmuStation5/data/compatibility.json";
 constexpr int  RETRY_COUNT    = 3;
 constexpr int  RETRY_DELAY_MS = 750;
 
