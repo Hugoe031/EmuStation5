@@ -284,12 +284,21 @@ QLineEdit#search_line_edit::placeholder-text {
     font-style: italic;
 }
 
-/* --- Hero row (PS5-style home strip) ----------------------------------- */
+QLineEdit#header_search {
+    background: rgba(255, 255, 255, 8);
+    border: 1px solid rgba(255, 255, 255, 16);
+    border-radius: 18px;
+    color: #f5f8fd;
+    font-size: 12px;
+    min-height: 32px;
+    padding: 0 12px;
+    selection-background-color: #0070d1;
+    selection-color: #ffffff;
+}
 
-QListView#hero_row {
-    background: transparent;
-    border: 0;
-    outline: 0;
+QLineEdit#header_search:focus {
+    border-color: #0070d1;
+    background: rgba(0, 112, 209, 20);
 }
 
 /* --- Game views -------------------------------------------------------- */
@@ -333,66 +342,6 @@ QTreeWidget#cfgs_list QHeaderView::section {
 QTreeWidget#cfgs_list QHeaderView::section::sortindicator {
     width: 10px;
     height: 10px;
-}
-
-/* --- Selected-game detail panel ---------------------------------------- */
-
-QFrame#game_detail_panel {
-    background: rgba(255, 255, 255, 8);
-    border: 1px solid rgba(255, 255, 255, 14);
-    border-radius: 12px;
-}
-
-QLabel#detail_icon {
-    background: transparent;
-    border-radius: 8px;
-}
-
-QLabel#detail_title {
-    color: #f5f8fd;
-    font-size: 18px;
-    font-weight: 700;
-    background: transparent;
-}
-
-QLabel#detail_meta {
-    color: #93a0b3;
-    font-size: 11px;
-    background: transparent;
-}
-
-QLabel#detail_status {
-    color: #dce8f8;
-    font-size: 11px;
-    background: rgba(0, 112, 209, 60);
-    border: 1px solid rgba(0, 112, 209, 130);
-    border-radius: 10px;
-    padding: 3px 10px;
-}
-
-QPushButton#detail_launch_button {
-    background: #0070d1;
-    border: 1px solid #0070d1;
-    border-radius: 18px;
-    color: #ffffff;
-    font-weight: 700;
-    min-width: 128px;
-    padding: 8px 22px;
-}
-
-QPushButton#detail_launch_button:hover {
-    background: #2e9bff;
-    border-color: #2e9bff;
-}
-
-QPushButton#detail_launch_button:pressed {
-    background: #005aad;
-}
-
-QPushButton#detail_launch_button:disabled {
-    background: rgba(255, 255, 255, 10);
-    border-color: rgba(255, 255, 255, 14);
-    color: #6d7787;
 }
 
 /* --- Grid size slider -------------------------------------------------- */

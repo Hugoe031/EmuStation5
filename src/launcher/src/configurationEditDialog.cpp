@@ -2,7 +2,10 @@
 
 #include "common/emulatorConfig.h"
 #include "configuration.h"
+#include "launcherTheme.h"
+#include "mainDialog.h"
 #include "mandatoryLineEdit.h"
+#include "updateChecker.h"
 #include <SDL3/SDL.h>
 
 #include <QAbstractItemView>
@@ -16,6 +19,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -507,10 +511,145 @@ void ConfigurationEditDialog::SetGlobalSettings(const QStringList& dirs, const Q
 
 	m_game_dirs_group->setVisible(true);
 	m_ui->controller_group->setVisible(true);
+	InitLauncherSettings();
 	update_game_directory_buttons();
 	if (!m_geometry_restored) {
 		GrowToFitContents();
 	}
+}
+
+void ConfigurationEditDialog::InitLauncherSettings() {
+	if (m_launcher_theme != nullptr) {
+		return;
+	}
+
+	const auto current = MainDialog::GetLauncherSettings();
+	m_initial_theme    = current.theme;
+
+	auto* tabs = m_ui->settings_tabs;
+	auto* page = new QWidget;
+	page->setObjectName(QStringLiteral("launcher_tab"));
+	auto* form = new QFormLayout(page);
+	form->setContentsMargins(12, 12, 12, 12);
+	form->setHorizontalSpacing(18);
+	form->setVerticalSpacing(12);
+
+	m_launcher_theme = new QComboBox(page);
+	m_launcher_theme->setObjectName(QStringLiteral("theme_combo"));
+	m_launcher_theme->addItems({tr("System"), tr("Dark"), tr("Light")});
+	m_launcher_theme->setCurrentIndex(current.theme);
+	m_launcher_theme->setAccessibleName(tr("Theme"));
+	form->addRow(tr("Theme"), m_launcher_theme);
+	connect(m_launcher_theme, &QComboBox::currentIndexChanged, this,
+	        [](int index) { LauncherTheme::Apply(index); });
+
+	m_launcher_updates = new QCheckBox(tr("Check for updates on startup"), page);
+	m_launcher_updates->setObjectName(QStringLiteral("check_updates_on_startup"));
+	m_launcher_updates->setChecked(current.check_updates_on_startup);
+	m_launcher_updates->setVisible(UpdateChecker::IsSupported());
+	m_launcher_updates->setAccessibleName(tr("Check for updates on startup"));
+	form->addRow(QString(), m_launcher_updates);
+
+	m_launcher_close_terminal =
+	    new QCheckBox(tr("Close terminal automatically when the game exits"), page);
+	m_launcher_close_terminal->setObjectName(QStringLiteral("close_terminal"));
+	m_launcher_close_terminal->setChecked(current.close_terminal);
+	m_launcher_close_terminal->setAccessibleName(
+	    tr("Close terminal automatically when the game exits"));
+#if defined(__APPLE__)
+	m_launcher_close_terminal->setVisible(false);
+#endif
+	form->addRow(QString(), m_launcher_close_terminal);
+
+	m_launcher_detached = new QCheckBox(tr("Run games without a terminal window"), page);
+	m_launcher_detached->setObjectName(QStringLiteral("detached_console"));
+	m_launcher_detached->setChecked(current.detached_console);
+	m_launcher_detached->setAccessibleName(tr("Run games without a terminal window"));
+	m_launcher_detached->setAccessibleDescription(
+	    tr("Runs the emulator without a console window and writes its output to "
+	       "_kyty_console.txt. Closing the launcher or a terminal does not stop the game."));
+	m_launcher_detached->setToolTip(m_launcher_detached->accessibleDescription());
+#if !defined(_WIN32)
+	m_launcher_detached->setVisible(false);
+#endif
+	form->addRow(QString(), m_launcher_detached);
+	m_launcher_close_terminal->setEnabled(!m_launcher_detached->isChecked());
+	connect(m_launcher_detached, &QCheckBox::toggled, m_launcher_close_terminal,
+	        [this](bool detached) { m_launcher_close_terminal->setEnabled(!detached); });
+
+	m_launcher_grid_view = new QCheckBox(tr("Show games as a grid"), page);
+	m_launcher_grid_view->setAccessibleName(tr("Show games as a grid"));
+	m_launcher_grid_view->setChecked(true);
+	form->addRow(QString(), m_launcher_grid_view);
+
+	m_launcher_cover_size = new QSlider(Qt::Horizontal, page);
+	m_launcher_cover_size->setRange(128, 320);
+	m_launcher_cover_size->setSingleStep(16);
+	m_launcher_cover_size->setPageStep(32);
+	m_launcher_cover_size->setValue(224);
+	m_launcher_cover_size->setAccessibleName(tr("Game cover size"));
+	form->addRow(tr("Game cover size"), m_launcher_cover_size);
+
+	m_launcher_settings_file = new QLabel(page);
+	m_launcher_settings_file->setWordWrap(true);
+	m_launcher_settings_file->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	m_launcher_settings_file->setAccessibleName(tr("Settings file location"));
+	form->addRow(tr("Settings file"), m_launcher_settings_file);
+
+	auto* scroll = new QScrollArea(tabs);
+	scroll->setObjectName(QStringLiteral("launcher_tab_scroll"));
+	scroll->setWidgetResizable(true);
+	scroll->setFrameShape(QFrame::NoFrame);
+	scroll->setWidget(page);
+	tabs->insertTab(0, scroll, tr("Launcher"));
+	tabs->setCurrentIndex(0);
+}
+
+void ConfigurationEditDialog::SetLauncherPreferences(bool grid_view, int cover_size,
+                                                     const QString& settings_file) {
+	if (m_launcher_grid_view != nullptr) {
+		m_launcher_grid_view->setChecked(grid_view);
+	}
+	if (m_launcher_cover_size != nullptr) {
+		m_launcher_cover_size->setValue(cover_size);
+	}
+	if (m_launcher_settings_file != nullptr) {
+		m_launcher_settings_file->setText(settings_file);
+	}
+}
+
+bool ConfigurationEditDialog::GetGridView() const {
+	return m_launcher_grid_view != nullptr ? m_launcher_grid_view->isChecked() : true;
+}
+
+int ConfigurationEditDialog::GetCoverSize() const {
+	return m_launcher_cover_size != nullptr ? m_launcher_cover_size->value() : 224;
+}
+
+void ConfigurationEditDialog::CommitLauncherSettings() {
+	if (!m_global_settings || m_launcher_theme == nullptr) {
+		return;
+	}
+
+	LauncherSettings settings;
+	settings.theme                    = m_launcher_theme->currentIndex();
+	settings.check_updates_on_startup = m_launcher_updates->isChecked();
+	settings.close_terminal           = m_launcher_close_terminal->isChecked();
+	settings.detached_console         = m_launcher_detached->isChecked();
+	MainDialog::SetLauncherSettings(settings);
+}
+
+void ConfigurationEditDialog::RevertLauncherTheme() {
+	if (m_global_settings && m_launcher_theme != nullptr) {
+		LauncherTheme::Apply(m_initial_theme);
+	}
+}
+
+void ConfigurationEditDialog::done(int r) {
+	if (r != QDialog::Accepted) {
+		RevertLauncherTheme();
+	}
+	QDialog::done(r);
 }
 
 void ConfigurationEditDialog::MakeTabsScrollable() {
@@ -687,6 +826,7 @@ void ConfigurationEditDialog::save() {
 	}
 
 	UpdateInfo(m_info, *m_ui, m_global_settings);
+	CommitLauncherSettings();
 
 	emit accept();
 }

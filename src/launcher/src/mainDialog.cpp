@@ -106,13 +106,14 @@ public:
 
 	[[nodiscard]] const QString& GetInterpreter() const { return m_interpreter; }
 
-	static void WriteSettings(QSettings& s);
-	static void ReadSettings(QSettings& s);
+	static void            WriteSettings(QSettings& s);
+	static void            ReadSettings(QSettings& s);
+	static LauncherSettings GetLauncherSettings();
+	static void            SetLauncherSettings(const LauncherSettings& settings);
 
 private:
 	void SetupMenus();
 	void SetupStatusBar();
-	void ShowSettingsDialog();
 	void RefreshGameCount();
 
 	static QByteArray g_last_geometry;
@@ -242,6 +243,7 @@ void MainDialogPrivate::Setup(MainDialog* main_dialog) {
 	m_ui = new Ui::MainDialog;
 	m_ui->setupUi(main_dialog);
 	m_ui->brand_mark->setPixmap(QIcon(QStringLiteral(":/icons/emustation5.png")).pixmap(QSize(44, 44)));
+	m_ui->header_search->setVisible(false);
 	m_ui->widget->SetControllerPreview(&m_controller_preview);
 
 	m_main_dialog    = main_dialog;
@@ -270,6 +272,10 @@ void MainDialogPrivate::Setup(MainDialog* main_dialog) {
 		        }
 	        });
 	connect(m_ui->widget, &ConfigurationListWidget::Run, this, &MainDialogPrivate::Run);
+	connect(m_ui->header_search, &QLineEdit::textChanged, m_ui->widget,
+	        &ConfigurationListWidget::SetSearchQuery);
+	connect(m_ui->widget, &ConfigurationListWidget::SearchQueryChanged, m_ui->header_search,
+	        &QLineEdit::setText);
 	connect(m_ui->check_updates_link, &QLabel::linkActivated, this,
 	        [this](const QString&) { m_update_checker->Check(true); });
 	connect(m_update_checker, &UpdateChecker::CheckingChanged, m_ui->check_updates_link,
@@ -316,11 +322,16 @@ void MainDialogPrivate::SetupMenus() {
 	const auto invoke = [this](const char* slot) {
 		QMetaObject::invokeMethod(m_ui->widget, slot, Qt::DirectConnection);
 	};
+	const auto show_search = [this]() {
+		m_ui->header_search->setVisible(true);
+		m_ui->header_search->setFocus();
+		m_ui->header_search->selectAll();
+	};
 
 	auto* file = m_ui->menu_File;
 	auto* add_game_folder = file->addAction(tr("Add Game Folder..."));
-	connect(add_game_folder, &QAction::triggered, this,
-	        [invoke]() { invoke("edit_global_settings"); });
+	connect(add_game_folder, &QAction::triggered, m_ui->widget,
+	        &ConfigurationListWidget::edit_global_settings);
 
 	auto* refresh = file->addAction(tr("Refresh Game List"));
 	refresh->setShortcut(QKeySequence::Refresh);
@@ -338,8 +349,8 @@ void MainDialogPrivate::SetupMenus() {
 	connect(start, &QAction::triggered, m_ui->widget, &ConfigurationListWidget::Run);
 
 	auto* configure_global = emulation->addAction(tr("Configure..."));
-	connect(configure_global, &QAction::triggered, this,
-	        [invoke]() { invoke("edit_global_settings"); });
+	connect(configure_global, &QAction::triggered, m_ui->widget,
+	        &ConfigurationListWidget::edit_global_settings);
 
 	auto* input_mapping = emulation->addAction(tr("Input Mapping..."));
 	connect(input_mapping, &QAction::triggered, this,
@@ -361,12 +372,7 @@ void MainDialogPrivate::SetupMenus() {
 	auto* view = m_ui->menu_View;
 	auto* focus_search = view->addAction(tr("Focus Search"));
 	focus_search->setShortcut(QKeySequence::Find);
-	connect(focus_search, &QAction::triggered, this, [this]() {
-		if (auto* search = m_ui->widget->findChild<QLineEdit*>(QStringLiteral("search_line_edit"))) {
-			search->setFocus();
-			search->selectAll();
-		}
-	});
+	connect(focus_search, &QAction::triggered, this, [show_search]() { show_search(); });
 
 	auto* grid_action = view->addAction(tr("Grid View"));
 	grid_action->setCheckable(true);
@@ -408,7 +414,8 @@ void MainDialogPrivate::SetupMenus() {
 	tools->addSeparator();
 	auto* settings = tools->addAction(tr("Settings..."));
 	settings->setShortcut(QKeySequence::Preferences);
-	connect(settings, &QAction::triggered, this, &MainDialogPrivate::ShowSettingsDialog);
+	connect(settings, &QAction::triggered, m_ui->widget,
+	        &ConfigurationListWidget::edit_global_settings);
 
 	auto* help = m_ui->menu_Help;
 	auto* about = help->addAction(tr("About EmuStation5"));
@@ -447,14 +454,10 @@ void MainDialogPrivate::SetupMenus() {
 	});
 	connect(m_ui->nav_trophies_button, &QToolButton::clicked, m_ui->widget,
 	        &ConfigurationListWidget::ViewTrophyOverview);
-	connect(m_ui->nav_settings_button, &QToolButton::clicked, this,
-	        &MainDialogPrivate::ShowSettingsDialog);
-	connect(m_ui->nav_search_button, &QToolButton::clicked, this, [this]() {
-		if (auto* search = m_ui->widget->findChild<QLineEdit*>(QStringLiteral("search_line_edit"))) {
-			search->setFocus();
-			search->selectAll();
-		}
-	});
+	connect(m_ui->nav_settings_button, &QToolButton::clicked, m_ui->widget,
+	        &ConfigurationListWidget::edit_global_settings);
+	connect(m_ui->nav_search_button, &QToolButton::clicked, this,
+	        [show_search]() { show_search(); });
 	auto* more_menu = new QMenu(m_ui->nav_more_button);
 	for (QAction* menu_action: menubar->actions()) {
 		auto* menu = menu_action->menu();
@@ -473,6 +476,19 @@ void MainDialogPrivate::SetupMenus() {
 			action->setShortcut(QKeySequence());
 			auto* shortcut = new QShortcut(keys, m_main_dialog);
 			connect(shortcut, &QShortcut::activated, action, &QAction::trigger);
+		}
+	}
+
+	// The library toolbar now shows only Refresh / Input mapping / Delete.
+	// Sorting remains available from the left rail's More menu.
+	if (auto* sort_button =
+	        m_ui->widget->findChild<QToolButton*>(QStringLiteral("sort_button"))) {
+		if (auto* source = sort_button->menu()) {
+			auto* sort_menu = new QMenu(tr("Sort Games"), m_main_dialog);
+			for (QAction* action: source->actions()) {
+				sort_menu->addAction(action);
+			}
+			more_menu->addMenu(sort_menu);
 		}
 	}
 	m_ui->nav_more_button->setMenu(more_menu);
@@ -508,118 +524,6 @@ void MainDialogPrivate::RefreshGameCount() {
 	const auto* list = m_ui->widget->findChild<QTreeWidget*>(QStringLiteral("cfgs_list"));
 	const int   count = list != nullptr ? list->topLevelItemCount() : 0;
 	m_status_games->setText(count == 1 ? tr("1 game") : tr("%1 games").arg(count));
-}
-
-void MainDialogPrivate::ShowSettingsDialog() {
-	QDialog dialog(m_main_dialog);
-	dialog.setObjectName(QStringLiteral("launcher_settings"));
-	dialog.setWindowTitle(tr("Settings"));
-	dialog.setModal(true);
-
-	auto* layout = new QVBoxLayout(&dialog);
-	layout->setContentsMargins(22, 20, 22, 18);
-	layout->setSpacing(16);
-
-	auto* heading = new QLabel(tr("Launcher Settings"), &dialog);
-	heading->setObjectName(QStringLiteral("settings_heading"));
-	heading->setAccessibleName(tr("Launcher Settings heading"));
-	dialog.setAccessibleName(tr("Settings"));
-	layout->addWidget(heading);
-
-	auto* form = new QFormLayout;
-	form->setHorizontalSpacing(18);
-	form->setVerticalSpacing(12);
-	form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-
-	auto* theme = new QComboBox(&dialog);
-	theme->setObjectName(QStringLiteral("theme_combo"));
-	theme->addItems({tr("System"), tr("Dark"), tr("Light")});
-	theme->setCurrentIndex(g_theme);
-	theme->setAccessibleName(tr("Theme"));
-	theme->setAccessibleDescription(
-	    tr("Choose between System, Dark and Light application themes"));
-	form->addRow(tr("Theme"), theme);
-
-	auto* updates = new QCheckBox(tr("Check for updates on startup"), &dialog);
-	updates->setObjectName(QStringLiteral("check_updates_on_startup"));
-	updates->setChecked(g_check_updates_on_startup);
-	updates->setVisible(UpdateChecker::IsSupported());
-	updates->setAccessibleName(tr("Check for updates on startup"));
-	form->addRow(QString(), updates);
-
-	auto* close_terminal =
-	    new QCheckBox(tr("Close terminal automatically when the game exits"), &dialog);
-	close_terminal->setObjectName(QStringLiteral("close_terminal"));
-	close_terminal->setChecked(g_close_terminal);
-	close_terminal->setAccessibleName(
-	    tr("Close terminal automatically when the game exits"));
-#if defined(__APPLE__)
-	close_terminal->setVisible(false);
-#endif
-	form->addRow(QString(), close_terminal);
-
-	auto* detached = new QCheckBox(tr("Run games without a terminal window"), &dialog);
-	detached->setObjectName(QStringLiteral("detached_console"));
-	detached->setChecked(g_detached_console);
-	detached->setAccessibleName(tr("Run games without a terminal window"));
-	detached->setAccessibleDescription(
-	    tr("Runs the emulator without a console window and writes its console output to "
-	       "_kyty_console.txt. Closing the launcher or a terminal does not stop the game."));
-	detached->setToolTip(detached->accessibleDescription());
-#if !defined(_WIN32)
-	detached->setVisible(false);
-#endif
-	form->addRow(QString(), detached);
-
-	// The terminal option only matters while a terminal is actually used.
-	close_terminal->setEnabled(!detached->isChecked());
-	connect(detached, &QCheckBox::toggled, close_terminal,
-	        [close_terminal](bool detached_mode) { close_terminal->setEnabled(!detached_mode); });
-
-	layout->addLayout(form);
-
-	auto* info = new QLabel(tr("Settings file: %1").arg(m_ui->widget->GetSettingsFile()), &dialog);
-	info->setObjectName(QStringLiteral("settings_file"));
-	info->setWordWrap(true);
-	info->setTextInteractionFlags(Qt::TextSelectableByMouse);
-	info->setAccessibleName(tr("Settings file location"));
-	layout->addWidget(info);
-
-	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
-	                                     Qt::Horizontal, &dialog);
-	layout->addWidget(buttons);
-	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-	// Logical tab chain for keyboard/screen-reader users: theme first, the
-	// checkboxes next, then the button bar. The read-only info label is not
-	// focusable since it renders outside the focus chain.
-	if (auto* ok = buttons->button(QDialogButtonBox::Ok)) {
-		ok->setAccessibleName(tr("OK"));
-		QWidget::setTabOrder(theme, updates);
-		QWidget::setTabOrder(updates, close_terminal);
-		QWidget::setTabOrder(close_terminal, detached);
-		QWidget::setTabOrder(detached, ok);
-		if (auto* cancel = buttons->button(QDialogButtonBox::Cancel)) {
-			QWidget::setTabOrder(ok, cancel);
-		}
-	}
-
-	const int previous_theme = g_theme;
-	connect(theme, &QComboBox::currentIndexChanged, this,
-	        [](int index) { LauncherTheme::Apply(index); });
-
-	if (dialog.exec() != QDialog::Accepted) {
-		LauncherTheme::Apply(previous_theme);
-		return;
-	}
-
-	g_theme                    = theme->currentIndex();
-	g_check_updates_on_startup = updates->isChecked();
-	g_close_terminal           = close_terminal->isChecked();
-	g_detached_console         = detached->isChecked();
-	LauncherTheme::Apply(g_theme);
-	m_ui->widget->WriteSettings();
 }
 
 void MainDialogPrivate::FindInterpreter() {
@@ -948,6 +852,14 @@ void MainDialog::ReadSettings(QSettings& s) {
 	MainDialogPrivate::ReadSettings(s);
 }
 
+LauncherSettings MainDialog::GetLauncherSettings() {
+	return MainDialogPrivate::GetLauncherSettings();
+}
+
+void MainDialog::SetLauncherSettings(const LauncherSettings& settings) {
+	MainDialogPrivate::SetLauncherSettings(settings);
+}
+
 void MainDialog::resizeEvent(QResizeEvent* event) {
 	emit Resize();
 	QMainWindow::resizeEvent(event);
@@ -996,6 +908,21 @@ void MainDialogPrivate::ReadSettings(QSettings& s) {
 	}
 
 	s.endGroup();
+}
+
+LauncherSettings MainDialogPrivate::GetLauncherSettings() {
+	return {g_theme, g_check_updates_on_startup, g_close_terminal, g_detached_console};
+}
+
+void MainDialogPrivate::SetLauncherSettings(const LauncherSettings& settings) {
+	g_theme                    = settings.theme;
+	g_check_updates_on_startup = settings.check_updates_on_startup;
+	g_close_terminal           = settings.close_terminal;
+	g_detached_console         = settings.detached_console;
+	if (g_theme < 0 || g_theme > 2) {
+		g_theme = 1;
+	}
+	LauncherTheme::Apply(g_theme);
 }
 
 void MainDialogPrivate::Run() {

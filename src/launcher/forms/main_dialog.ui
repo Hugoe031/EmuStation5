@@ -143,6 +143,31 @@
         </spacer>
        </item>
        <item>
+        <widget class="QLineEdit" name="header_search">
+         <property name="accessibleName">
+          <string>Search games</string>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>220</width>
+           <height>32</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>320</width>
+           <height>32</height>
+          </size>
+         </property>
+         <property name="placeholderText">
+          <string>Search games</string>
+         </property>
+         <property name="clearButtonEnabled">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QLabel" name="check_updates_link">
          <property name="text">
           <string>&lt;a href=&quot;check&quot;&gt;Check for updates&lt;/a&gt;</string>
@@ -276,22 +301,6 @@
            </widget>
           </item>
           <item>
-           <widget class="QToolButton" name="nav_settings_button">
-            <property name="text">
-             <string>Settings</string>
-            </property>
-            <property name="iconSize">
-             <size>
-              <width>28</width>
-              <height>28</height>
-             </size>
-            </property>
-            <property name="toolButtonStyle">
-             <enum>Qt::ToolButtonTextUnderIcon</enum>
-            </property>
-           </widget>
-          </item>
-          <item>
            <widget class="QToolButton" name="nav_search_button">
             <property name="text">
              <string>Search</string>
@@ -336,6 +345,22 @@
             </property>
             <property name="popupMode">
              <enum>QToolButton::InstantPopup</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QToolButton" name="nav_settings_button">
+            <property name="text">
+             <string>Settings</string>
+            </property>
+            <property name="iconSize">
+             <size>
+              <width>28</width>
+              <height>28</height>
+             </size>
+            </property>
+            <property name="toolButtonStyle">
+             <enum>Qt::ToolButtonTextUnderIcon</enum>
             </property>
            </widget>
           </item>

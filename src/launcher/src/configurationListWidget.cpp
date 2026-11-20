@@ -212,6 +212,17 @@ ConfigurationListWidget::ConfigurationListWidget(QWidget* parent)
 	m_ui->global_settings_button->setToolTip(tr("Edit global settings and game folders"));
 	m_ui->input_mapping_button->setToolTip(tr("Edit global input mapping"));
 
+	// The compact top bar keeps only Refresh, Input mapping and Delete. The
+	// remaining controls stay alive for the More menu / Launcher settings tab.
+	for (QToolButton* button: {m_ui->global_settings_button, m_ui->edit_button,
+	                           m_ui->trophy_overview_button, m_ui->sort_button,
+	                           m_ui->grid_view_button}) {
+		button->setVisible(false);
+	}
+	m_ui->toolbar_separator->setVisible(false);
+	m_ui->grid_size_slider->setVisible(false);
+	m_ui->search_line_edit->setVisible(false);
+
 	m_ui->delete_button->setEnabled(false);
 	m_ui->edit_button->setEnabled(false);
 
@@ -226,7 +237,7 @@ ConfigurationListWidget::ConfigurationListWidget(QWidget* parent)
 	ResetListColumnDefaults();
 	m_ui->cfgs_list->sortItems(GAME_NAME_COLUMN, Qt::AscendingOrder);
 	SetupGameGrid(m_ui->cfgs_list, m_ui->cfgs_grid);
-	SetupGameHero(m_ui->hero_row, m_ui->cfgs_list);
+	m_ui->game_views->setCurrentWidget(m_ui->cfgs_grid);
 	// Columns are reorderable and user-hideable from the header's context
 	// menu; both the order and the visibility persist in the settings.
 	auto* list_header = m_ui->cfgs_list->header();
@@ -239,7 +250,6 @@ ConfigurationListWidget::ConfigurationListWidget(QWidget* parent)
 	connect(list_header, &QHeaderView::sectionMoved, this,
 	        [this](int, int, int) { PersistHeaderStateSoon(); });
 	m_ui->cfgs_grid->setContextMenuPolicy(Qt::CustomContextMenu);
-	m_ui->hero_row->setContextMenuPolicy(Qt::CustomContextMenu);
 
 	connect(m_ui->refresh_action, &QAction::triggered, this,
 	        &ConfigurationListWidget::ScanGameDirectory);
@@ -266,21 +276,9 @@ ConfigurationListWidget::ConfigurationListWidget(QWidget* parent)
 	        [this](const QPoint& pos) {
 		        ShowContextMenu(m_ui->cfgs_list->itemFromIndex(m_ui->cfgs_grid->indexAt(pos)));
 	        });
-	connect(m_ui->hero_row, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
-		list_itemDoubleClicked(m_ui->cfgs_list->itemFromIndex(index), GAME_NAME_COLUMN);
-	});
-	connect(m_ui->hero_row, &QListView::customContextMenuRequested, this,
-	        [this](const QPoint& pos) {
-		        ShowContextMenu(m_ui->cfgs_list->itemFromIndex(m_ui->hero_row->indexAt(pos)));
-	        });
-	connect(m_ui->detail_launch_button, &QPushButton::clicked, this, [this]() {
-		if (m_selected_item != nullptr && m_run_enabled) {
-			emit Run();
-		}
-	});
 	connect(m_ui->grid_view_button, &QToolButton::toggled, this, [this](bool) { UpdateToolbarIcons(); });
 	connect(m_ui->grid_view_button, &QToolButton::toggled, this, [this](bool grid) {
-		m_ui->grid_size_slider->setVisible(grid);
+		m_ui->grid_size_slider->setVisible(false);
 		auto* view = grid ? static_cast<QAbstractItemView*>(m_ui->cfgs_grid) : m_ui->cfgs_list;
 		m_ui->game_views->setCurrentWidget(view);
 		view->setCurrentIndex(view->currentIndex().siblingAtColumn(GAME_NAME_COLUMN));
@@ -356,33 +354,21 @@ ConfigurationListWidget::ConfigurationListWidget(QWidget* parent)
 			    launch_current(static_cast<ConfigurationItem*>(
 			        m_ui->cfgs_list->itemFromIndex(m_ui->cfgs_grid->currentIndex())));
 		        });
-		connect(new QShortcut(QKeySequence(key), m_ui->hero_row, nullptr, nullptr,
-		                      Qt::WidgetWithChildrenShortcut),
-		        &QShortcut::activated, this, [this, launch_current]() {
-			    launch_current(static_cast<ConfigurationItem*>(
-			        m_ui->cfgs_list->itemFromIndex(m_ui->hero_row->currentIndex())));
-		        });
 	}
 
-	// Explicit tab order: toolbar -> search -> views -> empty-state action.
-	setTabOrder(m_ui->refresh_button, m_ui->global_settings_button);
-	setTabOrder(m_ui->global_settings_button, m_ui->input_mapping_button);
-	setTabOrder(m_ui->input_mapping_button, m_ui->edit_button);
-	setTabOrder(m_ui->edit_button, m_ui->delete_button);
-	setTabOrder(m_ui->delete_button, m_ui->trophy_overview_button);
-	setTabOrder(m_ui->trophy_overview_button, m_ui->sort_button);
-	setTabOrder(m_ui->sort_button, m_ui->grid_size_slider);
-	setTabOrder(m_ui->grid_size_slider, m_ui->grid_view_button);
-	setTabOrder(m_ui->grid_view_button, m_ui->search_line_edit);
-	setTabOrder(m_ui->search_line_edit, m_ui->hero_row);
-	setTabOrder(m_ui->hero_row, m_ui->cfgs_list);
-	setTabOrder(m_ui->cfgs_list, m_ui->cfgs_grid);
+	// Explicit tab order: the three visible toolbar buttons -> views -> overlay.
+	setTabOrder(m_ui->refresh_button, m_ui->input_mapping_button);
+	setTabOrder(m_ui->input_mapping_button, m_ui->delete_button);
+	setTabOrder(m_ui->delete_button, m_ui->cfgs_grid);
+	setTabOrder(m_ui->cfgs_grid, m_ui->cfgs_list);
 
 	connect(m_ui->cfgs_list->model(), &QAbstractItemModel::layoutChanged, this, [this]() {
 		filter_configurations(m_ui->search_line_edit->text());
 	});
 	connect(m_ui->search_line_edit, &QLineEdit::textChanged, this,
 	        &ConfigurationListWidget::filter_configurations);
+	connect(m_ui->search_line_edit, &QLineEdit::textChanged, this,
+	        &ConfigurationListWidget::SearchQueryChanged);
 	m_ui->search_line_edit->installEventFilter(this);
 	// Empty-state overlay: shown when the views would otherwise be blank
 	// (no games configured) or nothing matches the search query.
@@ -429,7 +415,7 @@ ConfigurationListWidget::ConfigurationListWidget(QWidget* parent)
 	        &ConfigurationListWidget::ApplyCompatibility);
 
 	ReadSettings();
-	m_ui->grid_size_slider->setVisible(m_ui->grid_view_button->isChecked());
+	m_ui->grid_size_slider->setVisible(false);
 	const int grid_size = m_ui->grid_size_slider->value();
 	m_ui->cfgs_grid->setIconSize(QSize(grid_size, grid_size));
 	connect(m_ui->grid_size_slider, &QSlider::valueChanged, this, [this](int width) {
@@ -759,7 +745,9 @@ void ConfigurationListWidget::ReadSettings() {
 	ConfigurationEditDialog::ReadSettings(*s);
 
 	s->beginGroup(CONF_LAUNCHER);
-	m_ui->grid_view_button->setChecked(s->value("grid_view", false).toBool());
+	// The PS5-style launcher always opens on the cover grid; the persisted
+	// grid_view value is kept for compatibility but no longer overrides it.
+	m_ui->grid_view_button->setChecked(true);
 	m_ui->grid_size_slider->setValue(
 	    s->value("grid_icon_width", m_ui->grid_size_slider->value()).toInt());
 	m_sort_column = s->value("grid_sort_column", GAME_NAME_COLUMN).toInt();
@@ -814,6 +802,32 @@ void ConfigurationListWidget::ReadSettings() {
 		}
 	}
 	s->endArray();
+}
+
+void ConfigurationListWidget::SetSearchQuery(const QString& text) {
+	if (m_ui->search_line_edit->text() == text) {
+		return;
+	}
+	m_ui->search_line_edit->setText(text);
+}
+
+void ConfigurationListWidget::SetLauncherPreferences(bool grid_view, int cover_size,
+                                                     const QString& settings_file) {
+	m_ui->grid_view_button->setChecked(grid_view);
+	m_ui->grid_size_slider->setValue(cover_size);
+	m_launcher_settings_file = settings_file;
+}
+
+bool ConfigurationListWidget::GetGridView() const {
+	return m_ui->grid_view_button->isChecked();
+}
+
+int ConfigurationListWidget::GetCoverSize() const {
+	return m_ui->grid_size_slider->value();
+}
+
+const QString& ConfigurationListWidget::GetLauncherSettingsFile() const {
+	return m_launcher_settings_file;
 }
 
 void ConfigurationListWidget::ApplyCompatibility() {
@@ -1297,6 +1311,7 @@ void ConfigurationListWidget::edit_global_settings() {
 	ConfigurationEditDialog dlg(info, this);
 	dlg.setWindowTitle(tr("Global settings"));
 	dlg.SetGlobalSettings(m_game_dirs, m_addons_dir);
+	dlg.SetLauncherPreferences(GetGridView(), GetCoverSize(), GetLauncherSettingsFile());
 	connect(&dlg, &ConfigurationEditDialog::PreviewControllerColor, this,
 	        &ConfigurationListWidget::PreviewControllerColor);
 	connect(&dlg, &ConfigurationEditDialog::ImportGameSettings, this,
@@ -1311,6 +1326,8 @@ void ConfigurationListWidget::edit_global_settings() {
 		const bool game_dirs_changed = game_dirs != m_game_dirs;
 		m_game_dirs                  = game_dirs;
 		m_addons_dir                 = NormalizeGameDirectory(dlg.GetAddonsDirectory());
+		m_ui->grid_view_button->setChecked(dlg.GetGridView());
+		m_ui->grid_size_slider->setValue(dlg.GetCoverSize());
 		WriteSettings();
 		if (game_dirs_changed) {
 			ScanGameDirectory();
@@ -1666,63 +1683,20 @@ void ConfigurationListWidget::filter_configurations(const QString& text) {
 }
 
 void ConfigurationListWidget::SelectItem(QTreeWidgetItem* witem) {
-	const auto status_text = [](Configuration::GameStatus status) {
-		switch (status) {
-		case Configuration::GameStatus::InGame: return QStringLiteral("In game");
-		case Configuration::GameStatus::Logo: return QStringLiteral("Logo");
-		case Configuration::GameStatus::DoesntBoot: return QStringLiteral("Does not boot");
-		case Configuration::GameStatus::MainMenu: return QStringLiteral("Main menu");
-		case Configuration::GameStatus::Unknown: break;
-		}
-		return QString();
-	};
-
 	auto* item = static_cast<ConfigurationItem*>(witem);
 	if (item == nullptr) {
 		m_selected_item = nullptr;
 		m_ui->game_views->SetBackgroundImage({});
 		m_ui->edit_button->setEnabled(false);
 		m_ui->delete_button->setEnabled(false);
-		m_ui->detail_icon->clear();
-		m_ui->detail_title->setText(tr("Select a game"));
-		m_ui->detail_meta->setText(tr("Choose a title to see its details"));
-		m_ui->detail_status->clear();
-		m_ui->detail_status->hide();
-		m_ui->detail_launch_button->setEnabled(false);
-		m_ui->detail_launch_button->setText(tr("Launch Game"));
 		emit Select();
 		return;
 	}
 
 	m_ui->delete_button->setEnabled(!item->IsRunning() && item->GetInfo().custom_settings);
 	m_ui->edit_button->setEnabled(!item->IsRunning());
-
 	m_selected_item = item;
 	m_ui->game_views->SetBackgroundImage(item->GetInfo().basedir);
-
-	// PS5-style detail strip: cover, title and compact metadata for the focused game.
-	QPixmap cover;
-	cover.loadFromData(item->GetIconData());
-	m_ui->detail_icon->setPixmap(cover.isNull()
-	                                 ? QPixmap()
-	                                 : cover.scaled(72, 72, Qt::KeepAspectRatio,
-	                                                Qt::SmoothTransformation));
-	m_ui->detail_title->setText(item->GetInfo().name);
-	QStringList details;
-	for (const int column: {GAME_SERIAL_COLUMN, GAME_VERSION_COLUMN,
-	                        GAME_FIRMWARE_VERSION_COLUMN, GAME_SIZE_COLUMN}) {
-		const auto value = item->text(column).trimmed();
-		if (!value.isEmpty()) {
-			details.append(value);
-		}
-	}
-	m_ui->detail_meta->setText(details.join(QStringLiteral("   •   ")));
-	const auto status = status_text(item->GetInfo().game_status);
-	m_ui->detail_status->setText(status);
-	m_ui->detail_status->setVisible(!status.isEmpty());
-	m_ui->detail_launch_button->setText(item->IsRunning() ? tr("Running...") : tr("Launch Game"));
-	m_ui->detail_launch_button->setEnabled(!item->IsRunning() && m_run_enabled);
-
 	emit Select();
 }
 

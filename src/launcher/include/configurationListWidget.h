@@ -57,11 +57,19 @@ public:
 	void ViewTrophies();
 	void ViewTrophyOverview();
 
+	// Launcher-view preferences surfaced in the main settings dialog.
+	void                      SetLauncherPreferences(bool grid_view, int cover_size,
+	                                                 const QString& settings_file);
+	[[nodiscard]] bool        GetGridView() const;
+	[[nodiscard]] int         GetCoverSize() const;
+	[[nodiscard]] const QString& GetLauncherSettingsFile() const;
+
 signals:
 
 	void Run();
 	void Select();
 	void PreviewControllerColor(const QString& color);
+	void SearchQueryChanged(const QString& text);
 
 protected:
 	void changeEvent(QEvent* event) override;
@@ -71,12 +79,13 @@ protected:
 public slots:
 	void WriteSettings();
 	void ReadSettings();
+	void SetSearchQuery(const QString& text);
+	void edit_global_settings();
 
 protected slots:
 
 	void edit_configuration();
 	void delete_configuartion();
-	void edit_global_settings();
 	void edit_input_mapping();
 	void list_itemDoubleClicked(QTreeWidgetItem* witem, int column);
 	void open_game_folder();
@@ -117,6 +126,7 @@ private:
 	Ui::ConfigurationListWidget*  m_ui            = nullptr;
 	QAction*                      m_search_action = nullptr;
 	QString                       m_settings_file;
+	QString                       m_launcher_settings_file;
 	QString                       m_runtime_directory;
 	QStringList                   m_game_dirs;
 	QString                       m_addons_dir;
